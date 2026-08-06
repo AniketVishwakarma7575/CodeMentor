@@ -1,0 +1,584 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   CodeMentor AI — token layer
+   ----------------------------------------------------------------------------
+   Rules encoded here, not in components:
+     1. Nothing in the app references a raw color. Only semantic tokens.
+     2. Chromatic budget belongs to severity. The UI accent is *contrast*,
+        not hue — primary actions are high-contrast neutral, the way Linear,
+        Vercel and Raycast do it. One blue exists, and it is `info`/focus.
+     3. Elevation is border + surface shift. Shadows are reserved for layers
+        that genuinely float above the page (palette, popover, dialog).
+     4. Hex is authored first; OKLCH overrides inside @supports. Same colors,
+        wider gamut where the display can render it.
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+
+  /* -- surfaces ---------------------------------------------------------- */
+  --bg-canvas: #0d0e12;
+  --bg-surface: #14161b;
+  --bg-elevated: #1b1e24;
+  --bg-inset: #0a0b0f;
+  --bg-hover: #202329;
+  --bg-active: #262a31;
+  --bg-selected: #1d2432;
+
+  /* -- borders ----------------------------------------------------------- */
+  --border-subtle: #23262d;
+  --border-strong: #33373f;
+  --border-focus: #3b82f6;
+
+  /* -- text -------------------------------------------------------------- */
+  --text-primary: #f2f3f5;
+  --text-secondary: #a9aeb8;
+  --text-muted: #858b96;
+  --text-faint: #656a75;
+  --text-inverse: #0d0e12;
+
+  /* -- severity: critical ------------------------------------------------ */
+  --sev-critical: #e5484d;
+  --sev-critical-fg: #ff6369;
+  --sev-critical-bg: #3a1519;
+  --sev-critical-bd: #6e2126;
+
+  /* -- severity: high ---------------------------------------------------- */
+  --sev-high: #f76b15;
+  --sev-high-fg: #ff954d;
+  --sev-high-bg: #361e0b;
+  --sev-high-bd: #6b3410;
+
+  /* -- severity: medium -------------------------------------------------- */
+  --sev-medium: #ffb224;
+  --sev-medium-fg: #ffca4d;
+  --sev-medium-bg: #322508;
+  --sev-medium-bd: #63470d;
+
+  /* -- severity: low (deliberately desaturated — low must not shout) ----- */
+  --sev-low: #7c88a0;
+  --sev-low-fg: #a3adc2;
+  --sev-low-bg: #1e2129;
+  --sev-low-bd: #363b48;
+
+  /* -- severity: info ---------------------------------------------------- */
+  --sev-info: #3b82f6;
+  --sev-info-fg: #6ea8ff;
+  --sev-info-bg: #141f36;
+  --sev-info-bd: #234070;
+
+  /* -- severity: success ------------------------------------------------- */
+  --sev-success: #30a46c;
+  --sev-success-fg: #4cc38a;
+  --sev-success-bg: #0d2419;
+  --sev-success-bd: #1b4632;
+
+  /* -- diff -------------------------------------------------------------- */
+  --diff-add-bg: #0e2c1d;
+  --diff-add-gutter: #14472e;
+  --diff-add-word: #1c6b43;
+  --diff-del-bg: #341418;
+  --diff-del-gutter: #58202a;
+  --diff-del-word: #7d2a33;
+
+  /* -- syntax (see lib/shiki-theme.ts — kept in sync by hand) ------------ */
+  --code-fg: #d4d7dd;
+  --code-comment: #5f6672;
+  --code-keyword: #a78bfa;
+  --code-function: #6cb6ff;
+  --code-string: #97cf9a;
+  --code-number: #f0b880;
+  --code-type: #6fd3c0;
+  --code-property: #b8c0cc;
+  --code-punct: #7b8494;
+  --code-line-number: #4c5159;
+  --code-line-highlight: #171a20;
+
+  /* -- floating-layer shadow (the only shadows in the product) ----------- */
+  --shadow-popover: 0 0 0 1px var(--border-strong), 0 8px 24px -6px rgb(0 0 0 / 0.6),
+    0 2px 6px -2px rgb(0 0 0 / 0.4);
+  --shadow-dialog: 0 0 0 1px var(--border-strong), 0 24px 64px -12px rgb(0 0 0 / 0.7),
+    0 8px 20px -8px rgb(0 0 0 / 0.5);
+}
+
+.light {
+  color-scheme: light;
+
+  --bg-canvas: #fcfcfd;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-inset: #f7f8fa;
+  --bg-hover: #f1f2f5;
+  --bg-active: #e8eaee;
+  --bg-selected: #eef3fd;
+
+  --border-subtle: #e4e6eb;
+  --border-strong: #cfd2da;
+  --border-focus: #2563eb;
+
+  --text-primary: #16181d;
+  --text-secondary: #5b616e;
+  --text-muted: #767c89;
+  --text-faint: #9aa0ac;
+  --text-inverse: #fcfcfd;
+
+  --sev-critical: #dc3239;
+  --sev-critical-fg: #c02026;
+  --sev-critical-bg: #fff0f0;
+  --sev-critical-bd: #f5c8c9;
+
+  --sev-high: #e05e0a;
+  --sev-high-fg: #ad4200;
+  --sev-high-bg: #fff3e9;
+  --sev-high-bd: #f7d4b4;
+
+  --sev-medium: #dd9200;
+  --sev-medium-fg: #855000;
+  --sev-medium-bg: #fff7e3;
+  --sev-medium-bd: #f0dcad;
+
+  --sev-low: #79839a;
+  --sev-low-fg: #59606f;
+  --sev-low-bg: #f3f4f7;
+  --sev-low-bd: #dfe2e9;
+
+  --sev-info: #2563eb;
+  --sev-info-fg: #0a5cc7;
+  --sev-info-bg: #eef4ff;
+  --sev-info-bd: #c6dafb;
+
+  --sev-success: #16874f;
+  --sev-success-fg: #0f7343;
+  --sev-success-bg: #edf9f2;
+  --sev-success-bd: #b9e5ce;
+
+  --diff-add-bg: #e7f7ee;
+  --diff-add-gutter: #c6ecd7;
+  --diff-add-word: #a8e0c1;
+  --diff-del-bg: #fdeced;
+  --diff-del-gutter: #f7ced1;
+  --diff-del-word: #f3b8bc;
+
+  --code-fg: #24272e;
+  --code-comment: #8a909c;
+  --code-keyword: #7c3aed;
+  --code-function: #0b62c4;
+  --code-string: #217a3f;
+  --code-number: #a8560c;
+  --code-type: #0f7c78;
+  --code-property: #3d4450;
+  --code-punct: #6b7280;
+  --code-line-number: #b0b5be;
+  --code-line-highlight: #f1f3f7;
+
+  --shadow-popover: 0 0 0 1px var(--border-subtle), 0 8px 24px -6px rgb(16 18 24 / 0.12),
+    0 2px 6px -2px rgb(16 18 24 / 0.08);
+  --shadow-dialog: 0 0 0 1px var(--border-subtle), 0 24px 64px -12px rgb(16 18 24 / 0.18),
+    0 8px 20px -8px rgb(16 18 24 / 0.1);
+}
+
+/* Wide-gamut pass. Identical intent, more headroom on P3 displays. */
+@supports (color: oklch(0 0 0)) {
+  :root {
+    --bg-canvas: oklch(0.165 0.006 264);
+    --bg-surface: oklch(0.198 0.0065 264);
+    --bg-elevated: oklch(0.234 0.007 264);
+    --bg-inset: oklch(0.142 0.0055 264);
+    --bg-hover: oklch(0.26 0.0075 264);
+    --bg-active: oklch(0.29 0.008 264);
+    --bg-selected: oklch(0.255 0.024 258);
+
+    --border-subtle: oklch(0.278 0.0075 264);
+    --border-strong: oklch(0.365 0.0095 264);
+
+    --text-primary: oklch(0.96 0.003 264);
+    --text-secondary: oklch(0.755 0.009 264);
+    --text-muted: oklch(0.625 0.01 264);
+    --text-faint: oklch(0.5 0.01 264);
+
+    --sev-critical: oklch(0.616 0.207 24.5);
+    --sev-critical-fg: oklch(0.69 0.185 22);
+    --sev-critical-bg: oklch(0.26 0.062 22);
+    --sev-critical-bd: oklch(0.372 0.113 22);
+
+    --sev-high: oklch(0.688 0.196 43);
+    --sev-high-fg: oklch(0.762 0.146 50);
+    --sev-high-bg: oklch(0.258 0.055 45);
+    --sev-high-bd: oklch(0.383 0.106 45);
+
+    --sev-medium: oklch(0.812 0.152 78);
+    --sev-medium-fg: oklch(0.862 0.13 82);
+    --sev-medium-bg: oklch(0.26 0.048 80);
+    --sev-medium-bd: oklch(0.383 0.09 80);
+
+    --sev-low: oklch(0.618 0.032 264);
+    --sev-low-fg: oklch(0.732 0.028 264);
+    --sev-low-bg: oklch(0.245 0.012 264);
+    --sev-low-bd: oklch(0.335 0.016 264);
+
+    --sev-info: oklch(0.623 0.196 259);
+    --sev-info-fg: oklch(0.723 0.145 259);
+    --sev-info-bg: oklch(0.248 0.07 259);
+    --sev-info-bd: oklch(0.372 0.115 259);
+
+    --sev-success: oklch(0.618 0.135 156);
+    --sev-success-fg: oklch(0.718 0.137 157);
+    --sev-success-bg: oklch(0.248 0.052 157);
+    --sev-success-bd: oklch(0.36 0.084 157);
+  }
+
+  .light {
+    --bg-canvas: oklch(0.9915 0.0012 264);
+    --bg-surface: oklch(1 0 0);
+    --bg-elevated: oklch(1 0 0);
+    --bg-inset: oklch(0.976 0.003 264);
+    --bg-hover: oklch(0.958 0.004 264);
+    --bg-active: oklch(0.932 0.005 264);
+    --bg-selected: oklch(0.963 0.016 259);
+
+    --border-subtle: oklch(0.918 0.005 264);
+    --border-strong: oklch(0.848 0.008 264);
+
+    --text-primary: oklch(0.212 0.008 264);
+    --text-secondary: oklch(0.488 0.014 264);
+    --text-muted: oklch(0.578 0.014 264);
+    --text-faint: oklch(0.702 0.013 264);
+
+    --sev-critical: oklch(0.565 0.199 25);
+    --sev-critical-fg: oklch(0.503 0.196 25);
+    --sev-critical-bg: oklch(0.968 0.017 22);
+    --sev-critical-bd: oklch(0.867 0.062 22);
+
+    --sev-high: oklch(0.633 0.176 47);
+    --sev-high-fg: oklch(0.518 0.152 47);
+    --sev-high-bg: oklch(0.968 0.023 60);
+    --sev-high-bd: oklch(0.877 0.062 60);
+
+    --sev-medium: oklch(0.735 0.155 74);
+    --sev-medium-fg: oklch(0.503 0.108 74);
+    --sev-medium-bg: oklch(0.976 0.032 88);
+    --sev-medium-bd: oklch(0.888 0.058 88);
+
+    --sev-low: oklch(0.6 0.03 264);
+    --sev-low-fg: oklch(0.478 0.02 264);
+    --sev-low-bg: oklch(0.966 0.003 264);
+    --sev-low-bd: oklch(0.897 0.007 264);
+
+    --sev-info: oklch(0.546 0.216 262);
+    --sev-info-fg: oklch(0.478 0.187 259);
+    --sev-info-bg: oklch(0.966 0.019 259);
+    --sev-info-bd: oklch(0.868 0.063 259);
+
+    --sev-success: oklch(0.53 0.126 158);
+    --sev-success-fg: oklch(0.478 0.113 158);
+    --sev-success-bg: oklch(0.968 0.024 158);
+    --sev-success-bd: oklch(0.878 0.062 158);
+  }
+}
+
+/* ============================================================================
+   Tailwind v4 theme bridge.
+   `inline` so utilities emit var(--token) and themes swap with zero re-render.
+   ========================================================================== */
+@theme inline {
+  --color-canvas: var(--bg-canvas);
+  --color-surface: var(--bg-surface);
+  --color-elevated: var(--bg-elevated);
+  --color-inset: var(--bg-inset);
+  --color-hover: var(--bg-hover);
+  --color-active: var(--bg-active);
+  --color-selected: var(--bg-selected);
+
+  --color-subtle: var(--border-subtle);
+  --color-strong: var(--border-strong);
+  --color-focus: var(--border-focus);
+
+  --color-fg: var(--text-primary);
+  --color-fg-secondary: var(--text-secondary);
+  --color-fg-muted: var(--text-muted);
+  --color-fg-faint: var(--text-faint);
+  --color-fg-inverse: var(--text-inverse);
+
+  --color-critical: var(--sev-critical);
+  --color-critical-fg: var(--sev-critical-fg);
+  --color-critical-bg: var(--sev-critical-bg);
+  --color-critical-bd: var(--sev-critical-bd);
+
+  --color-high: var(--sev-high);
+  --color-high-fg: var(--sev-high-fg);
+  --color-high-bg: var(--sev-high-bg);
+  --color-high-bd: var(--sev-high-bd);
+
+  --color-medium: var(--sev-medium);
+  --color-medium-fg: var(--sev-medium-fg);
+  --color-medium-bg: var(--sev-medium-bg);
+  --color-medium-bd: var(--sev-medium-bd);
+
+  --color-low: var(--sev-low);
+  --color-low-fg: var(--sev-low-fg);
+  --color-low-bg: var(--sev-low-bg);
+  --color-low-bd: var(--sev-low-bd);
+
+  --color-info: var(--sev-info);
+  --color-info-fg: var(--sev-info-fg);
+  --color-info-bg: var(--sev-info-bg);
+  --color-info-bd: var(--sev-info-bd);
+
+  --color-success: var(--sev-success);
+  --color-success-fg: var(--sev-success-fg);
+  --color-success-bg: var(--sev-success-bg);
+  --color-success-bd: var(--sev-success-bd);
+
+  --color-diff-add: var(--diff-add-bg);
+  --color-diff-add-gutter: var(--diff-add-gutter);
+  --color-diff-del: var(--diff-del-bg);
+  --color-diff-del-gutter: var(--diff-del-gutter);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Type scale — 12 / 13 / 14 / 16 / 20 / 24 / 32 / 48. Nothing between. */
+  --text-2xs: 0.6875rem; /* 11px — badges, gutter numerals only */
+  --text-2xs--line-height: 0.875rem;
+  --text-xs: 0.75rem; /* 12 */
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem; /* 13 — the UI default */
+  --text-sm--line-height: 1.125rem;
+  --text-base: 0.875rem; /* 14 — prose */
+  --text-base--line-height: 1.4rem;
+  --text-md: 1rem; /* 16 */
+  --text-md--line-height: 1.5rem;
+  --text-lg: 1.25rem; /* 20 */
+  --text-lg--line-height: 1.75rem;
+  --text-lg--letter-spacing: -0.011em;
+  --text-xl: 1.5rem; /* 24 */
+  --text-xl--line-height: 2rem;
+  --text-xl--letter-spacing: -0.014em;
+  --text-2xl: 2rem; /* 32 */
+  --text-2xl--line-height: 2.5rem;
+  --text-2xl--letter-spacing: -0.02em;
+  --text-3xl: 3rem; /* 48 */
+  --text-3xl--line-height: 3.5rem;
+  --text-3xl--letter-spacing: -0.026em;
+
+  /* 4px base scale */
+  --spacing: 0.25rem;
+
+  --radius-xs: 3px;
+  --radius-sm: 4px; /* severity chips — not rounded-full */
+  --radius-md: 6px; /* controls */
+  --radius-lg: 8px; /* cards, panes */
+  --radius-xl: 12px; /* dialogs, palette */
+
+  --shadow-popover: var(--shadow-popover);
+  --shadow-dialog: var(--shadow-dialog);
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  * {
+    border-color: var(--border-subtle);
+    min-width: 0; /* every flex/grid child may shrink — long paths must not blow out layout */
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 0.8125rem;
+    line-height: 1.125rem;
+    font-weight: 400;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "cv05" 1, "cv09" 1, "ss03" 1; /* single-storey g, slashed 0, cursive-less l */
+    text-rendering: optimizeLegibility;
+    overscroll-behavior: none;
+  }
+
+  /* Every metric in this product is tabular. Numbers must not jitter as they
+     update — a counting score with proportional figures looks broken. */
+  .tnum,
+  [data-metric],
+  code,
+  kbd,
+  pre,
+  time {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1, "cv05" 1, "ss03" 1;
+  }
+
+  code,
+  kbd,
+  pre {
+    font-family: var(--font-mono);
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--sev-info) 32%, transparent);
+    color: var(--text-primary);
+  }
+
+  /* One focus treatment, everywhere. */
+  :focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 1px;
+    border-radius: 3px;
+  }
+
+  /* Thin, unobtrusive scrollbars — a dense tool has a lot of them. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 6px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-faint);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+@keyframes cm-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes cm-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The one indeterminate loop in the product: an analyzer stage that is running.
+   It masks latency, which is the only justification for a looping animation. */
+@keyframes cm-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+@layer components {
+  /* Prose used only inside explanations and learning content. 1.6 line-height
+     is a reading measure, not a UI measure — never apply it to chrome. */
+  .prose-explain {
+    font-size: 0.875rem;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    max-width: 68ch;
+  }
+  .prose-explain strong {
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+  .prose-explain code {
+    font-size: 0.8125rem;
+    background: var(--bg-inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    padding: 0.5px 4px;
+    color: var(--text-primary);
+  }
+  .prose-explain p + p {
+    margin-top: 0.75rem;
+  }
+
+  /* Shiki output. We render tokens ourselves, so this only covers <pre> blocks
+     produced server-side for the report view. */
+  .shiki,
+  .shiki span {
+    color: var(--shiki-fg, inherit);
+  }
+  .light .shiki,
+  .light .shiki span {
+    color: var(--shiki-light, inherit);
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  /* A 400-char minified line must scroll its own container, never the page. */
+  .scroll-x {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  .grid-lines {
+    background-image: linear-gradient(
+      to right,
+      var(--border-subtle) 1px,
+      transparent 1px
+    );
+  }
+}
+
+/* Reduced motion: movement goes, opacity stays. Built in, not retrofitted. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media print {
+  :root {
+    color-scheme: light;
+  }
+  body {
+    background: #fff;
+    color: #000;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 10px;
+    color: #555;
+  }
+}
