@@ -24,15 +24,27 @@ export const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", 
 /** SonarQube's issue taxonomy — what *kind* of debt this is. */
 export type IssueType = "vulnerability" | "bug" | "code-smell" | "security-hotspot";
 
-/** Which analyzer produced the finding. Attribution builds trust. */
+/**
+ * Which analyzer produced the finding. Attribution builds trust.
+ *
+ * ⚠️ MUST stay in sync with codementor-backend/src/shared/types/domain.ts.
+ *    A value here that the backend does not emit is dead code; a value the
+ *    backend emits that is missing here renders as `undefined` in the UI,
+ *    because `engineLabel` in utils.ts is a lookup with no fallback.
+ *
+ * ⚠️ `checkmarx` and `sonarqube` were removed deliberately. We do not run those
+ *    products — labelling a Semgrep finding "Checkmarx SAST" is trademark
+ *    misuse. `semgrep` and `sonarjs` are what actually runs.
+ */
 export type Engine =
   | "codementor-ai"
-  | "sonarqube"
-  | "eslint"
   | "semgrep"
-  | "checkmarx"
-  | "lighthouse"
-  | "dependency-audit";
+  | "eslint"
+  | "sonarjs"
+  | "jscpd"
+  | "gitleaks"
+  | "osv"
+  | "lighthouse";
 
 export type FindingStatus = "open" | "applied" | "dismissed" | "snoozed";
 

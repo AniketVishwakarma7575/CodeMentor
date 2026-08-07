@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { REPO, SCORE, TOP_OFFENDERS } from "@/data/repo";
 import { FINDINGS } from "@/data/findings";
 import {
-  engineLabel,
+  labelForEngine,
   fileName,
   formatDebt,
   ratingColorVar,
@@ -199,7 +199,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                       <p className="text-sm leading-[1.45] text-fg">{f.title}</p>
                       <p className="tnum mt-0.5 font-mono text-2xs text-fg-muted">
                         {severityMeta[f.severity].label} · {f.file}:{f.line} · {f.ruleKey}
-                        {f.cwe ? ` · ${f.cwe.id}` : ""} · {engineLabel[f.engine]} · {f.confidence}%
+                        {f.cwe ? ` · ${f.cwe.id}` : ""} · {labelForEngine(f.engine)} · {f.confidence}%
                       </p>
                       <p className="mt-1 text-2xs leading-[1.5] text-fg-secondary">{f.whatsWrong}</p>
                     </div>

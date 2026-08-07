@@ -12,9 +12,11 @@ import {
   X,
 } from "lucide-react";
 import type { Finding, RunLogLine, RunStage } from "@/lib/types";
-import { initialStages, subscribeToRun, TOTAL_MS } from "@/lib/run-stream";
+import { initialStages, subscribeToRun, TOTAL_MS, type RunEvent } from "@/lib/run-stream";
+import { cancelRun, createRun } from "@/lib/api/runs";
+import { USE_FIXTURES } from "@/lib/api/config";
 import { REPO, SCORE } from "@/data/repo";
-import { cn, engineLabel, formatDuration, scoreColorVar, severityMeta } from "@/lib/utils";
+import { cn, formatDuration, labelForEngine, scoreColorVar, severityMeta } from "@/lib/utils";
 import { countUp, expandCollapse, streamIn, transition } from "@/lib/motion";
 import { Button, Eyebrow, Panel } from "@/components/ui/primitives";
 import { SeverityGlyph } from "@/components/severity";
@@ -39,6 +41,11 @@ export function RunScreen() {
   const [showLog, setShowLog] = React.useState(false);
   const [runKey, setRunKey] = React.useState(0);
   const [elapsed, setElapsed] = React.useState(0);
+  const [runId, setRunId] = React.useState<string | null>(null);
+  /** Connection problem. `willRetry` means EventSource is already reconnecting. */
+  const [connError, setConnError] = React.useState<{ message: string; willRetry: boolean } | null>(
+    null
+  );
   const stopRef = React.useRef<(() => void) | null>(null);
 
   React.useEffect(() => {
@@ -47,30 +54,56 @@ export function RunScreen() {
     setLogs([]);
     setDone(false);
     setCancelled(false);
+    setConnError(null);
     setElapsed(0);
+    setRunId(null);
 
     const t0 = performance.now();
     const tick = window.setInterval(() => setElapsed(performance.now() - t0), 100);
+    // Guards against a late async resolve writing state after unmount, and
+    // against StrictMode's double-invoke starting two runs in development.
+    let disposed = false;
 
-    const stop = subscribeToRun(
-      (e) => {
+    const handlers = {
+      onEvent: (e: RunEvent) => {
         if (e.type === "stage" && e.stage) {
           setStages((prev) => prev.map((s) => (s.id === e.stage!.id ? { ...s, ...e.stage! } : s)));
         } else if (e.type === "finding" && e.finding) {
-          setFound((prev) => (prev.some((f) => f.id === e.finding!.id) ? prev : [...prev, e.finding!]));
+          // Dedupe: an SSE reconnect replays events the client already saw.
+          setFound((prev) =>
+            prev.some((f) => f.id === e.finding!.id) ? prev : [...prev, e.finding!]
+          );
         } else if (e.type === "log" && e.log) {
           setLogs((prev) => [...prev, e.log!]);
         } else if (e.type === "done") {
           setDone(true);
+          setConnError(null);
           window.clearInterval(tick);
         }
       },
-      { speed: 3.2 }
-    );
-    stopRef.current = stop;
+      onError: (err: { message: string; willRetry: boolean }) => setConnError(err),
+    };
+
+    if (USE_FIXTURES) {
+      stopRef.current = subscribeToRun("fixture", handlers);
+    } else {
+      void createRun({ mode: "snippet", source: "// paste code here", language: "javascript" })
+        .then((run) => {
+          if (disposed) return;
+          setRunId(run.runId);
+          stopRef.current = subscribeToRun(run.runId, handlers);
+        })
+        .catch((err: Error) => {
+          if (disposed) return;
+          setConnError({ message: err.message, willRetry: false });
+          window.clearInterval(tick);
+        });
+    }
 
     return () => {
-      stop();
+      disposed = true;
+      stopRef.current?.();
+      stopRef.current = null;
       window.clearInterval(tick);
     };
   }, [runKey]);
@@ -83,6 +116,14 @@ export function RunScreen() {
   function cancel() {
     stopRef.current?.();
     setCancelled(true);
+    // Stop the stream locally AND tell the server, so the sandbox actually
+    // stops burning CPU. A cancel that only closes the EventSource is not a
+    // cancel — the run keeps going and keeps costing money.
+    if (runId && !USE_FIXTURES) {
+      void cancelRun(runId).catch(() => {
+        /* already finished or gone — nothing to do */
+      });
+    }
   }
 
   return (
@@ -126,9 +167,11 @@ export function RunScreen() {
         <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
           {cancelled
             ? "Run cancelled."
-            : done
-              ? `Analysis complete. ${totalFindings} findings. Quality score ${SCORE.overall} out of 100.`
-              : `${activeStage?.label ?? "Starting"}. ${totalFindings} findings so far.`}
+            : connError && !connError.willRetry
+              ? `Connection failed. ${connError.message}`
+              : done
+                ? `Analysis complete. ${totalFindings} findings. Quality score ${SCORE.overall} out of 100.`
+                : `${activeStage?.label ?? "Starting"}. ${totalFindings} findings so far.`}
         </div>
 
         {/* ---- top-level progress ------------------------------------------ */}
@@ -151,6 +194,47 @@ export function RunScreen() {
                 <StageRow key={stage.id} stage={stage} last={i === stages.length - 1} />
               ))}
             </ol>
+
+            {/* ---- connection state ------------------------------------------
+                A dropped SSE connection is a first-class state, not a silent
+                stall. `willRetry` distinguishes "reconnecting" (amber, the
+                browser is already retrying) from "gone" (red, fatal) — a
+                spinner that never resolves teaches users the tool is broken. */}
+            {connError ? (
+              <div
+                role="status"
+                className={cn(
+                  "mt-3 rounded-lg border px-3 py-2",
+                  connError.willRetry
+                    ? "border-medium-bd bg-medium-bg"
+                    : "border-critical-bd bg-critical-bg"
+                )}
+              >
+                <div className="flex items-center gap-1.5">
+                  <AlertTriangle
+                    size={12}
+                    className={connError.willRetry ? "text-medium-fg" : "text-critical-fg"}
+                    aria-hidden
+                  />
+                  <span
+                    className={cn(
+                      "text-2xs font-medium",
+                      connError.willRetry ? "text-medium-fg" : "text-critical-fg"
+                    )}
+                  >
+                    {connError.message}
+                  </span>
+                </div>
+                {!connError.willRetry ? (
+                  <button
+                    onClick={() => setRunKey((k) => k + 1)}
+                    className="mt-1.5 text-2xs text-fg-secondary underline-offset-2 hover:underline"
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
 
             {degraded.length > 0 ? (
               <div className="mt-3 rounded-lg border border-medium-bd bg-medium-bg px-3 py-2">
@@ -272,7 +356,7 @@ export function RunScreen() {
                             </p>
                           </div>
                           <span className="hidden shrink-0 text-2xs text-fg-muted sm:block">
-                            {engineLabel[f.engine]}
+                            {labelForEngine(f.engine)}
                           </span>
                         </Link>
                       </motion.li>
@@ -324,7 +408,7 @@ function StageRow({ stage, last }: { stage: RunStage; last: boolean }) {
           </span>
           {stage.engine ? (
             <span className="hidden shrink-0 font-mono text-2xs text-fg-faint sm:inline">
-              {engineLabel[stage.engine]}
+              {labelForEngine(stage.engine)}
             </span>
           ) : null}
           <span className="tnum ml-auto shrink-0 font-mono text-2xs text-fg-muted">
