@@ -16,13 +16,12 @@ import {
   Unlink,
 } from "lucide-react";
 import { useActiveProject } from "@/lib/active-project";
-import { ApiError } from "@/lib/api/client";
 import {
   disconnectRepository,
-  listRepositories,
   rescanRepository,
   type RepositorySummary,
 } from "@/lib/api/repositories";
+import { removeRepository, upsertRepository, useRepositories } from "@/lib/repositories-store";
 import { cn, labelForEngine, ratingColorVar, ratingFromScore, scoreColorVar } from "@/lib/utils";
 import { Button, Eyebrow } from "@/components/ui/primitives";
 import { FolderBrowser } from "@/components/repositories/folder-browser";
@@ -38,31 +37,21 @@ import { ProjectPicker } from "@/components/repositories/project-picker";
    ========================================================================== */
 
 export function RepositoriesClient() {
-  const [repos, setRepos] = React.useState<RepositorySummary[] | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
   const [browserOpen, setBrowserOpen] = React.useState(false);
   const [activeId, setActiveId] = useActiveProject();
   const router = useRouter();
 
-  const load = React.useCallback(async () => {
-    setError(null);
-    try {
-      setRepos(await listRepositories());
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not load repositories.");
-      setRepos([]);
-    }
-  }, []);
-
-  React.useEffect(() => {
-    void load();
-  }, [load]);
+  // The shared store, not local state: this screen is the one that EDITS the
+  // list, and the top bar's project switcher reads the same store. A private
+  // copy here is why a freshly connected folder never showed up in the
+  // switcher until the next full page load.
+  const { repos, loading, error, refresh } = useRepositories();
 
   const onConnected = React.useCallback(
     (repo: RepositorySummary) => {
       // Insert locally rather than refetching — the response is authoritative
       // and a round-trip here would make the new row appear a beat late.
-      setRepos((prev) => [repo, ...(prev ?? [])]);
+      upsertRepository(repo);
       setActiveId(repo.id);
     },
     [setActiveId]
@@ -70,7 +59,7 @@ export function RepositoriesClient() {
 
   const onDisconnected = React.useCallback(
     (id: string) => {
-      setRepos((prev) => (prev ?? []).filter((r) => r.id !== id));
+      removeRepository(id);
       // Clearing the selection matters: leaving activeId pointing at a deleted
       // repo puts the picker in a state with no visible checkmark and no
       // obvious way to understand why.
@@ -80,7 +69,7 @@ export function RepositoriesClient() {
   );
 
   const onUpdated = React.useCallback((repo: RepositorySummary) => {
-    setRepos((prev) => (prev ?? []).map((r) => (r.id === repo.id ? repo : r)));
+    upsertRepository(repo);
   }, []);
 
   /**
@@ -90,12 +79,14 @@ export function RepositoriesClient() {
   const analyse = React.useCallback(
     (id: string) => {
       setActiveId(id);
-      router.push("/runs");
+      // The id goes in the URL as well as the store. The run screen posts a run
+      // on mount, and `setActiveId` writes localStorage asynchronously from
+      // that screen's point of view — the URL is the only carrier that is
+      // guaranteed correct on its first render.
+      router.push(`/runs?repo=${encodeURIComponent(id)}`);
     },
     [router, setActiveId]
   );
-
-  const loading = repos === null;
 
   return (
     <div className="h-full overflow-y-auto">
@@ -112,7 +103,7 @@ export function RepositoriesClient() {
 
           <div className="flex shrink-0 items-center gap-1.5">
             <ProjectPicker
-              projects={repos ?? []}
+              projects={repos}
               activeId={activeId}
               onSelect={setActiveId}
               onAddLocal={() => setBrowserOpen(true)}
@@ -129,7 +120,7 @@ export function RepositoriesClient() {
           <div className="mt-3 flex items-center gap-2 rounded-lg border border-critical-bd bg-critical-bg px-3 py-2 text-sm text-critical-fg">
             <TriangleAlert size={13} className="shrink-0" aria-hidden />
             <span className="min-w-0 flex-1">{error}</span>
-            <Button size="xs" variant="ghost" onClick={() => void load()}>
+            <Button size="xs" variant="ghost" onClick={() => void refresh()}>
               Retry
             </Button>
           </div>

@@ -2,37 +2,58 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Check, X } from "lucide-react";
 import { CONCEPTS } from "@/data/repo";
+import { USE_FIXTURES } from "@/lib/api/config";
+import { conceptServer, skillSignalsServer } from "@/lib/api/server-fetchers";
+import { repositoryServer } from "@/lib/api/server-fetchers";
+import type { Concept } from "@/lib/types";
 import { tokenizeCode } from "@/lib/highlight";
 import { Eyebrow } from "@/components/ui/primitives";
 import { CodeBlock } from "@/components/learning/code-block";
 import { SelfCheck } from "@/components/learning/self-check";
 
-export function generateStaticParams() {
-  return CONCEPTS.map((c) => ({ slug: c.id }));
-}
-
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const concept = CONCEPTS.find((c) => c.id === slug);
+  const concept = await loadConcept(slug);
   return { title: concept?.title ?? "Concept" };
 }
 
-export default async function ConceptPage({ params }: { params: Promise<{ slug: string }> }) {
-  const { slug } = await params;
-  const concept = CONCEPTS.find((c) => c.id === slug);
+/**
+ * Concept content is editorial — seeded in the backend's source and identical
+ * for every install — so it is served from the API but is not per-user data.
+ *
+ * What IS per-user is the occurrence line in the header. The fixture hardcoded
+ * `hit 3× in acme/checkout-service` on every concept, naming a repository the
+ * reader has never connected. With `?repo=` the count comes from that
+ * project's `finding_history`; without it, the clause is omitted rather than
+ * guessed.
+ */
+export default async function ConceptPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ repo?: string }>;
+}) {
+  const [{ slug }, { repo }] = await Promise.all([params, searchParams]);
+
+  const concept = await loadConcept(slug);
   if (!concept) notFound();
 
-  const [vulnTokens, safeTokens] = await Promise.all([
+  const [signals, repository, vulnTokens, safeTokens] = await Promise.all([
+    repo && !USE_FIXTURES ? skillSignalsServer(repo) : Promise.resolve(null),
+    repo && !USE_FIXTURES ? repositoryServer(repo) : Promise.resolve(null),
     tokenizeCode(concept.vulnerable.code, concept.vulnerable.language),
     tokenizeCode(concept.safe.code, concept.safe.language),
   ]);
+
+  const signal = signals?.find((s) => s.conceptId === concept.id) ?? null;
 
   return (
     <div className="h-full overflow-y-auto">
       {/* Reading measure, not full-bleed. Prose is the product on this screen. */}
       <div className="mx-auto max-w-[860px] px-5 py-4">
         <Link
-          href="/learning"
+          href={repo ? `/learning?repo=${encodeURIComponent(repo)}` : "/learning"}
           className="inline-flex h-6 items-center gap-1 text-2xs text-fg-muted hover:text-fg"
         >
           <ArrowLeft size={11} aria-hidden />
@@ -43,8 +64,10 @@ export default async function ConceptPage({ params }: { params: Promise<{ slug: 
           <h1 className="text-xl font-semibold tracking-[-0.014em] text-fg">{concept.title}</h1>
           <p className="tnum mt-1 font-mono text-2xs text-fg-muted">
             {concept.category} · {concept.difficulty} · {concept.readMinutes} min read
-            {concept.relatedCwe ? ` · ${concept.relatedCwe}` : ""} · hit {concept.timesHit}× in{" "}
-            acme/checkout-service
+            {concept.relatedCwe ? ` · ${concept.relatedCwe}` : ""}
+            {USE_FIXTURES
+              ? ` · hit ${concept.timesHit}× in acme/checkout-service`
+              : occurrenceClause(signal?.occurrences, repository?.name)}
           </p>
           <p className="prose-explain mt-3">{concept.summary}</p>
         </header>
@@ -92,4 +115,23 @@ export default async function ConceptPage({ params }: { params: Promise<{ slug: 
       </div>
     </div>
   );
+}
+
+/**
+ * Only claims a count when there is both a repository to name and a signal to
+ * count. "hit 0×" and "hit 3× in this repo" with no repo named are both worse
+ * than saying nothing.
+ */
+function occurrenceClause(occurrences: number | undefined, repoName: string | undefined): string {
+  if (!repoName) return "";
+  if (!occurrences) return ` · not hit in ${repoName}`;
+  return ` · hit ${occurrences}× in ${repoName}`;
+}
+
+async function loadConcept(slug: string): Promise<Concept | null> {
+  if (USE_FIXTURES) return CONCEPTS.find((c) => c.id === slug) ?? null;
+  // Falls back to the bundled copy if the API is down: this content is
+  // editorial and identical either way, so serving it offline costs the reader
+  // nothing and is not a claim about their code.
+  return (await conceptServer(slug)) ?? CONCEPTS.find((c) => c.id === slug) ?? null;
 }

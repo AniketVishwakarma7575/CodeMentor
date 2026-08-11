@@ -1,7 +1,6 @@
 import type { Finding, FindingStatus, Severity } from "@/lib/types";
 import { apiFetch, apiRequest } from "./client";
 import { USE_FIXTURES } from "./config";
-import { serverFetch } from "./server";
 import { FINDINGS } from "@/data/findings";
 
 /* ============================================================================
@@ -73,10 +72,4 @@ export function setFindingStatus(
 
 /* -- server ----------------------------------------------------------------- */
 
-export function listFindingsServer(filters: FindingFilters = {}): Promise<Finding[] | null> {
-  return serverFetch<Finding[]>(`/findings${toQuery(filters)}`);
-}
 
-export function fileSummaryServer(runId: string): Promise<FileSummaryRow[] | null> {
-  return serverFetch<FileSummaryRow[]>(`/findings/summary/${runId}`);
-}

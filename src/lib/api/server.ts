@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { API_BASE } from "./config";
 
 /* ============================================================================
@@ -13,6 +14,20 @@ import { API_BASE } from "./config";
    `cache: "no-store"` because every one of these reads is live analysis state.
    Next would otherwise cache the fetch for the lifetime of the build and the
    review screen would show one run forever.
+
+   ── ⚠️ THE COOKIE HEADER IS NOT OPTIONAL ──
+
+   A server component's `fetch` runs in Node. It has no cookie jar, so nothing
+   is attached automatically and `credentials: "include"` does nothing. The
+   session lives in httpOnly cookies on the incoming request, and forwarding
+   them by hand is the ONLY way this reaches the API as the signed-in user.
+
+   Leaving it out does not produce an error anyone would notice: every call
+   401s, every 401 becomes `null`, and every page renders its empty state. The
+   review screen says "Nothing to review yet" about a project that was analysed
+   thirty seconds ago, and the dashboard says a repo has never been run. That
+   is exactly what happened when auth landed and this function still fetched
+   anonymously.
    ========================================================================== */
 
 export async function serverFetch<T>(path: string, timeoutMs = 10_000): Promise<T | null> {
@@ -23,7 +38,10 @@ export async function serverFetch<T>(path: string, timeoutMs = 10_000): Promise<
     const res = await fetch(`${API_BASE}${path}`, {
       cache: "no-store",
       signal: controller.signal,
-      headers: { Accept: "application/json" },
+      headers: {
+        Accept: "application/json",
+        ...(await cookieHeader()),
+      },
     });
     if (!res.ok) return null;
 
@@ -36,5 +54,24 @@ export async function serverFetch<T>(path: string, timeoutMs = 10_000): Promise<
     return null;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * The incoming request's cookies, as a header.
+ *
+ * `cookies()` only works inside a request scope. It throws during static
+ * generation and at module load, so this returns an empty object there rather
+ * than taking the build down — an unauthenticated fetch is the correct
+ * behaviour when there is no request to be authenticated as.
+ */
+async function cookieHeader(): Promise<Record<string, string>> {
+  try {
+    const jar = await cookies();
+    const all = jar.getAll();
+    if (all.length === 0) return {};
+    return { cookie: all.map((c) => `${c.name}=${c.value}`).join("; ") };
+  } catch {
+    return {};
   }
 }

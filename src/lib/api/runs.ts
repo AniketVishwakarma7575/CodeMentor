@@ -1,6 +1,5 @@
 import type { Dimension, QualityGate, RunStage } from "@/lib/types";
 import { apiFetch } from "./client";
-import { serverFetch } from "./server";
 
 /* ============================================================================
    Runs.
@@ -20,7 +19,10 @@ export interface CreateRunResponse {
 }
 
 export type CreateRunBody =
-  | { mode: "local"; repoId: string }
+  // `branch` omitted analyses the working tree as it is on disk, uncommitted
+  // changes included. Supplying one checks that branch out into a temporary
+  // worktree server-side — the user's own checkout is never touched.
+  | { mode: "local"; repoId: string; branch?: string }
   | { mode: "repo"; repoId: string; branch?: string; commitSha?: string }
   | { mode: "snippet"; source: string; language?: string; filename?: string };
 
@@ -75,12 +77,3 @@ export function cancelRun(runId: string): Promise<void> {
   return apiFetch<void>(`/runs/${runId}`, { method: "DELETE" });
 }
 
-/* -- server ----------------------------------------------------------------- */
-
-export function latestRunServer(repoId: string): Promise<RunDetail | null> {
-  return serverFetch<RunDetail>(`/runs/latest?repoId=${encodeURIComponent(repoId)}`);
-}
-
-export function getRunServer(runId: string): Promise<RunDetail | null> {
-  return serverFetch<RunDetail>(`/runs/${runId}`);
-}

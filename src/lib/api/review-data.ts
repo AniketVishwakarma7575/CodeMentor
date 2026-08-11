@@ -1,7 +1,9 @@
+import "server-only";
+
 import type { FileNode, Finding, Severity } from "@/lib/types";
 import { serverFetch } from "./server";
-import { latestRunServer, type RunDetail } from "./runs";
-import { listFindingsServer } from "./findings";
+import type { RunDetail } from "./runs";
+import { latestRunServer, listFindingsServer } from "./server-fetchers";
 
 /* ============================================================================
    Everything the review screen needs for one repository, assembled on the

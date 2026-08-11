@@ -9,6 +9,7 @@ import { initialStages, subscribeToRun, TOTAL_MS, type RunEvent } from "@/lib/ru
 import { cancelRun, createRun, getRun, type RunDetail } from "@/lib/api/runs";
 import { listRepositories, type RepositorySummary } from "@/lib/api/repositories";
 import { useActiveProject } from "@/lib/active-project";
+import { useActiveBranch } from "@/lib/active-branch";
 import { USE_FIXTURES } from "@/lib/api/config";
 import { REPO, SCORE } from "@/data/repo";
 import { cn, formatDuration, labelForEngine, scoreColorVar, severityMeta } from "@/lib/utils";
@@ -27,12 +28,63 @@ import { StageGlyph } from "./stage-glyph";
    assertion they have to take on faith.
    ========================================================================== */
 
-export function RunScreen() {
+export function RunScreen({
+  repoId = null,
+  branch = null,
+}: {
+  repoId?: string | null;
+  /**
+   * Analyse this branch instead of the folder on disk.
+   *
+   * Null means the working tree, uncommitted changes included — the default,
+   * because this tool is pointed at the folder you are working in. A branch is
+   * checked out into a temporary worktree by the backend; nothing here (or
+   * there) touches the user's own checkout.
+   */
+  branch?: string | null;
+}) {
   const reduce = useReducedMotion();
-  // Which project this run analyses. Null until the effect that reads
-  // localStorage has run, which is why the run is keyed on it below rather
-  // than started unconditionally on mount.
-  const [activeProjectId] = useActiveProject();
+  // The stored selection. Null until the effect that reads localStorage has
+  // run, which is why the run is keyed on the target below rather than started
+  // unconditionally on mount.
+  const [activeProjectId, setActiveProject] = useActiveProject();
+
+  /**
+   * Which project this run analyses.
+   *
+   * ⚠️ `?repo=` WINS. This screen posts a run the moment it mounts, so the id
+   *    it reads has to be the one the user just acted on. localStorage is a
+   *    preference that survives navigation, tabs and reloads — trusting it here
+   *    is what let a mount with a leftover selection re-analyse the previous
+   *    project and file the result under its name, with nothing on screen
+   *    disagreeing.
+   *
+   * The fallback stays for the entry points that carry no repo — the sidebar
+   * and the command palette, where "run" means "the project I am working in".
+   */
+  const targetRepoId = repoId ?? activeProjectId;
+
+  /**
+   * Which branch to analyse.
+   *
+   * ⚠️ The URL wins, but a STORED selection is honoured when the URL is silent
+   *    — and that fallback is what makes the top bar honest. The switcher
+   *    persists the choice per project, so the header reads "repo / main" on
+   *    every screen; landing on a bare `/runs` and analysing the working tree
+   *    anyway produced a run subtitled "develop/v1 · working tree" underneath
+   *    a header claiming `main`. Two different answers to "what am I looking
+   *    at", on the same screen.
+   */
+  const [storedBranch] = useActiveBranch(targetRepoId);
+  const targetBranch = branch ?? storedBranch;
+
+  // An explicit URL is a selection, so the rest of the app should agree with
+  // it — otherwise the picker and the review link keep pointing at whatever
+  // was chosen last. Writing the same value back is a no-op, so this cannot
+  // loop.
+  React.useEffect(() => {
+    if (repoId && repoId !== activeProjectId) setActiveProject(repoId);
+  }, [repoId, activeProjectId, setActiveProject]);
   const [stages, setStages] = React.useState<RunStage[]>(initialStages);
   const [found, setFound] = React.useState<Finding[]>([]);
   const [logs, setLogs] = React.useState<RunLogLine[]>([]);
@@ -52,6 +104,26 @@ export function RunScreen() {
   );
   const stopRef = React.useRef<(() => void) | null>(null);
 
+  /**
+   * The POST for the run this screen is currently showing, keyed by what
+   * identifies it.
+   *
+   * ⚠️ THE PROMISE, not a boolean. `createRun` is called from the effect body,
+   *    so the request is already on the wire before any `disposed` flag can be
+   *    read — a guard inside `.then` suppresses the SUBSCRIPTION, never the
+   *    run. Under StrictMode that is exactly what happened: two POSTs, two
+   *    server-side analyses, and an SSE stream attached to only the second.
+   *    The first ran to completion unwatched, wrote its own findings, and
+   *    raced the real run to become `/runs/latest`.
+   *
+   *    Holding the promise makes the second invocation REUSE the first one's
+   *    request instead of issuing its own, so one mount is always one run
+   *    while the surviving effect still gets a runId to subscribe to.
+   */
+  const startedRef = React.useRef<{ key: string; promise: Promise<{ runId: string }> } | null>(
+    null
+  );
+
   React.useEffect(() => {
     setStages(initialStages());
     setFound([]);
@@ -66,8 +138,8 @@ export function RunScreen() {
 
     const t0 = performance.now();
     const tick = window.setInterval(() => setElapsed(performance.now() - t0), 100);
-    // Guards against a late async resolve writing state after unmount, and
-    // against StrictMode's double-invoke starting two runs in development.
+    // Guards against a late async resolve writing state after unmount. It does
+    // NOT stop a second run being started — see `startedRef` for that.
     let disposed = false;
     // Captured in the `done` handler, which closes over this effect and cannot
     // see the `runId` state set later in the same tick.
@@ -109,7 +181,7 @@ export function RunScreen() {
 
     if (USE_FIXTURES) {
       stopRef.current = subscribeToRun("fixture", handlers);
-    } else if (!activeProjectId) {
+    } else if (!targetRepoId) {
       // Nothing to analyse. Say so rather than firing a request that can only
       // fail — "no project selected" is a state the user can act on, and a
       // network error is not.
@@ -119,7 +191,24 @@ export function RunScreen() {
       });
       window.clearInterval(tick);
     } else {
-      void createRun({ mode: "local", repoId: activeProjectId })
+      // Everything that makes this a DIFFERENT run. `runKey` covers "Analyse
+      // again", which re-runs the same target on purpose.
+      const key = `${runKey} ${targetRepoId} ${targetBranch ?? ""}`;
+
+      let started = startedRef.current;
+      if (!started || started.key !== key) {
+        started = {
+          key,
+          promise: createRun({
+            mode: "local",
+            repoId: targetRepoId,
+            ...(targetBranch ? { branch: targetBranch } : {}),
+          }),
+        };
+        startedRef.current = started;
+      }
+
+      void started.promise
         .then((run) => {
           if (disposed) return;
           startedRunId = run.runId;
@@ -128,6 +217,9 @@ export function RunScreen() {
         })
         .catch((err: Error) => {
           if (disposed) return;
+          // A failed POST must not be retried silently on the next invocation
+          // against a promise that can only reject again.
+          if (startedRef.current?.key === key) startedRef.current = null;
           setConnError({ message: err.message, willRetry: false });
           window.clearInterval(tick);
         });
@@ -139,10 +231,15 @@ export function RunScreen() {
       stopRef.current = null;
       window.clearInterval(tick);
     };
-    // `activeProjectId` is a dependency, not just a read: it arrives from
-    // localStorage one tick after mount, and without it here the first render's
-    // null would permanently latch the "no project selected" branch.
-  }, [runKey, activeProjectId]);
+    // `targetRepoId` is a dependency, not just a read: with no `?repo=` it
+    // resolves through localStorage one tick after mount, and without it here
+    // the first render's null would permanently latch the "no project
+    // selected" branch. With a `?repo=` it is correct on the first render and
+    // never changes, so the run fires once.
+    //
+    // `branch` is a dependency for the same reason it is a URL parameter:
+    // changing it means analysing different code, which is a different run.
+  }, [runKey, targetRepoId, targetBranch]);
 
   /**
    * Which project this run is about.
@@ -152,11 +249,11 @@ export function RunScreen() {
    * would leave "Analysing" with no subject for the whole run.
    */
   React.useEffect(() => {
-    if (USE_FIXTURES || !activeProjectId) return;
+    if (USE_FIXTURES || !targetRepoId) return;
     let disposed = false;
     void listRepositories()
       .then((all) => {
-        if (!disposed) setRepo(all.find((r) => r.id === activeProjectId) ?? null);
+        if (!disposed) setRepo(all.find((r) => r.id === targetRepoId) ?? null);
       })
       .catch(() => {
         /* The subtitle degrades to the branch alone. Not worth an error state. */
@@ -164,7 +261,7 @@ export function RunScreen() {
     return () => {
       disposed = true;
     };
-  }, [activeProjectId]);
+  }, [targetRepoId]);
 
   /**
    * `repo · branch · commit`.
@@ -176,7 +273,17 @@ export function RunScreen() {
    */
   const subtitle = USE_FIXTURES
     ? `${REPO.name} · ${REPO.branch} · ${REPO.commit}`
-    : [repo?.name ?? "Project", runDetail?.branch ?? repo?.branch, runDetail?.commitSha]
+    : [
+        repo?.name ?? "Project",
+        runDetail?.branch ?? targetBranch ?? repo?.branch,
+        // `commitSha` is the literal string "local" for a working-tree run,
+        // because the files on disk match no commit. Spelling that out beats
+        // printing "local" as though it were a SHA — and a branch run has a
+        // real one, which is the whole difference between the two.
+        runDetail?.commitSha === "local"
+          ? "working tree"
+          : runDetail?.commitSha?.slice(0, 7),
+      ]
         .filter(Boolean)
         .join(" · ");
 
@@ -235,7 +342,7 @@ export function RunScreen() {
               <Button variant="primary" size="sm" asChild>
                 {/* Carry the repo through — /reviews with no ?repo renders the
                     fixture review, which after a real run is the wrong screen. */}
-                <Link href={activeProjectId ? `/reviews?repo=${activeProjectId}` : "/reviews"}>
+                <Link href={targetRepoId ? `/reviews?repo=${targetRepoId}` : "/reviews"}>
                   Open review
                 </Link>
               </Button>

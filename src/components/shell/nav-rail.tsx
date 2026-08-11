@@ -12,6 +12,8 @@ import {
   Settings,
   ShieldCheck,
 } from "lucide-react";
+import { USE_FIXTURES } from "@/lib/api/config";
+import { useProjectStatus } from "@/lib/use-project-status";
 import { cn } from "@/lib/utils";
 import { Tooltip, IconButton } from "@/components/ui/primitives";
 
@@ -19,11 +21,38 @@ import { Tooltip, IconButton } from "@/components/ui/primitives";
    is one of the loudest tells that a UI was assembled rather than designed. */
 const NAV = [
   { href: "/repositories", label: "Repositories", icon: FolderGit2 },
-  { href: "/reviews", label: "Reviews", icon: ListChecks, badge: 8 },
+  { href: "/reviews", label: "Reviews", icon: ListChecks },
   { href: "/learning", label: "Learning", icon: BookOpen },
   { href: "/insights", label: "Insights", icon: LayoutDashboard },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
+
+/**
+ * Screens whose content is about ONE project, and which therefore read `?repo=`.
+ *
+ * Carrying the id in the nav link is what keeps those screens server-rendered:
+ * without it they land bare, and a client component has to read localStorage
+ * and redirect before anything real can be fetched. `/repositories` is absent
+ * deliberately — it is the screen for choosing a project, so scoping it to the
+ * current one would be circular.
+ */
+const REPO_SCOPED = new Set(["/reviews", "/learning", "/insights", "/settings"]);
+
+/**
+ * Open findings in the active project's last run.
+ *
+ * Null — not 0 — when there is no project or no run, because the badge is
+ * hidden for null and would read as "all clear" for 0. The fixture pinned this
+ * at 8, which stayed 8 on a repo with eleven findings and on one with none.
+ */
+function useReviewBadge(): { badge: number | null; repoId: string | null } {
+  const { run, repo } = useProjectStatus();
+  const repoId = repo?.id ?? null;
+  if (USE_FIXTURES) return { badge: 8, repoId: null };
+  if (!run?.findingCounts) return { badge: null, repoId };
+  const total = Object.values(run.findingCounts).reduce((a, b) => a + b, 0);
+  return { badge: total > 0 ? total : null, repoId };
+}
 
 export function NavRail({
   collapsed,
@@ -33,6 +62,7 @@ export function NavRail({
   onToggle: () => void;
 }) {
   const pathname = usePathname();
+  const { badge: reviewBadge, repoId } = useReviewBadge();
 
   return (
     <nav
@@ -52,11 +82,14 @@ export function NavRail({
       </div>
 
       <ul className="flex flex-1 flex-col gap-0.5 p-2">
-        {NAV.map(({ href, label, icon: Icon, badge }) => {
+        {NAV.map(({ href, label, icon: Icon }) => {
           const active = pathname.startsWith(href);
+          const badge = href === "/reviews" ? reviewBadge : null;
+          const target =
+            repoId && REPO_SCOPED.has(href) ? `${href}?repo=${encodeURIComponent(repoId)}` : href;
           const link = (
             <Link
-              href={href}
+              href={target}
               aria-current={active ? "page" : undefined}
               className={cn(
                 "group flex h-7 items-center gap-2 rounded-md text-sm",

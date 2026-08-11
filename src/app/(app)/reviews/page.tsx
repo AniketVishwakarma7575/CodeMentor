@@ -120,7 +120,7 @@ function NotAnalysedYet({ repoId }: { repoId: string }) {
         </p>
         <div className="mt-4 flex items-center justify-center gap-2">
           <Button size="sm" variant="primary" asChild>
-            <Link href="/runs">Analyse now</Link>
+            <Link href={`/runs?repo=${encodeURIComponent(repoId)}`}>Analyse now</Link>
           </Button>
           <Button size="sm" variant="ghost" asChild>
             <Link href="/repositories">Back to repositories</Link>
