@@ -85,6 +85,32 @@ export interface DiffLine {
   newLine?: number;
 }
 
+/**
+ * Which axis a fix moves, and by how much in plain words.
+ *
+ * ── WHY THESE ARE SEPARATE FROM `whyItMatters` ──
+ *
+ * "Why it matters" answers why the DEFECT is bad. These answer what the FIX
+ * buys you, and they are not the same sentence: a missing tenant scope matters
+ * because it leaks data, while fixing it also collapses three code paths into
+ * one. A reader deciding whether to spend the twenty minutes needs the second
+ * answer, and a single blended paragraph gives them neither cleanly.
+ *
+ * `dimension` deliberately reuses the scoring dimensions, so a card's claimed
+ * improvement and the number it moves on the dashboard are the same axis. A
+ * note on an axis the finding does not score against would be a claim the
+ * score then contradicts.
+ *
+ * Only axes the fix genuinely moves are present. An empty array is the correct
+ * answer for a fix that is purely a correctness repair, and padding it with
+ * "improves maintainability" boilerplate is how these stop being read.
+ */
+export interface ImprovementNote {
+  dimension: "security" | "reliability" | "performance" | "maintainability" | "readability";
+  /** One sentence, concrete. "Removes a query per row" beats "faster". */
+  text: string;
+}
+
 export interface LearningTeaser {
   conceptId: string;
   concept: string;
@@ -119,8 +145,19 @@ export interface Finding {
   /** Progressive disclosure: only rendered when the card is expanded. */
   deepDive?: string;
   dataFlow?: DataFlowStep[];
+  /**
+   * The recommended shape of the fix, in prose.
+   *
+   * Distinct from `fix`, which is a diff. A diff shows the edit; this says why
+   * that edit is the right one and what the alternatives cost — the part a
+   * reader needs when the patch is a suggestion rather than something
+   * mechanically committable, which for a contextual finding it usually is.
+   */
+  betterApproach?: string;
   fix?: FixPatch;
   verification: VerificationCheck[];
+  /** What fixing this buys, per scoring dimension. Empty when purely a repair. */
+  improvements?: ImprovementNote[];
   tradeOff?: string;
   learning?: LearningTeaser;
   status: FindingStatus;

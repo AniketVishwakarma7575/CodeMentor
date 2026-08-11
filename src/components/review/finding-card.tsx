@@ -9,12 +9,14 @@ import {
   Check,
   ChevronDown,
   Clock3,
+  Lightbulb,
   Minus,
   Scale,
   Sparkle,
+  TrendingUp,
   X,
 } from "lucide-react";
-import type { Finding, VerificationCheck } from "@/lib/types";
+import type { Finding, ImprovementNote, VerificationCheck } from "@/lib/types";
 import {
   cn,
   engineLabel,
@@ -248,6 +250,26 @@ export function FindingCard({
           </div>
         ) : null}
 
+        {/* ---- 3b. the better approach ------------------------------------- */}
+        {/* Above the diff, not below it. The diff answers "what edit"; this
+            answers "why that edit" — and a reader who disagrees with the
+            reasoning should not have to scroll past the patch to find it.
+            Renders on its own when there is no committable patch, which for a
+            contextual finding is the common case. */}
+        {finding.betterApproach ? (
+          <section className="border-b border-subtle px-4 py-3">
+            <div className="flex gap-2.5">
+              <Lightbulb size={13} className="mt-0.5 shrink-0 text-fg-muted" aria-hidden />
+              <div className="min-w-0">
+                <Eyebrow>Better approach</Eyebrow>
+                <p className="mt-0.5 text-sm leading-[1.5] text-fg-secondary">
+                  {finding.betterApproach}
+                </p>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         {/* ---- 4. the fix -------------------------------------------------- */}
         {finding.fix ? (
           <section className="border-b border-subtle px-4 py-3">
@@ -267,6 +289,32 @@ export function FindingCard({
 
             {/* ---- 5. verification ----------------------------------------- */}
             <VerificationRow checks={finding.verification} />
+          </section>
+        ) : null}
+
+        {/* ---- 5b. what fixing it buys ------------------------------------- */}
+        {/* Sits between the fix and the trade-off on purpose: gain, then cost,
+            in the order someone deciding whether to do the work reads them. */}
+        {finding.improvements?.length ? (
+          <section className="border-b border-subtle px-4 py-3">
+            <div className="flex gap-2.5">
+              <TrendingUp size={13} className="mt-0.5 shrink-0 text-fg-muted" aria-hidden />
+              <div className="min-w-0 flex-1">
+                <Eyebrow>What this fixes</Eyebrow>
+                <ul className="mt-1 space-y-1">
+                  {finding.improvements.map((note, i) => (
+                    <li key={i} className="flex min-w-0 gap-2 text-sm leading-[1.5]">
+                      {/* The label is the same axis the dashboard scores, so a
+                          reader can connect the claim to the number it moves. */}
+                      <span className="mt-px w-[92px] shrink-0 text-2xs font-medium uppercase tracking-[0.04em] text-fg-faint">
+                        {DIMENSION_LABEL[note.dimension]}
+                      </span>
+                      <span className="min-w-0 flex-1 text-fg-secondary">{note.text}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
           </section>
         ) : null}
 
@@ -342,6 +390,20 @@ export function FindingCard({
     </motion.article>
   );
 }
+
+/**
+ * Dimension keys → the labels the dashboard already uses.
+ *
+ * Written out rather than title-cased from the key so the card and the score
+ * panel can never drift into calling the same axis two different things.
+ */
+const DIMENSION_LABEL: Record<ImprovementNote["dimension"], string> = {
+  security: "Security",
+  reliability: "Reliability",
+  performance: "Performance",
+  maintainability: "Maintainability",
+  readability: "Readability",
+};
 
 /* -- pieces ----------------------------------------------------------------- */
 
