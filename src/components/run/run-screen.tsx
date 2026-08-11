@@ -3,23 +3,19 @@
 import * as React from "react";
 import Link from "next/link";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import {
-  AlertTriangle,
-  Check,
-  ChevronDown,
-  RotateCcw,
-  Terminal,
-  X,
-} from "lucide-react";
+import { AlertTriangle, ChevronDown, RotateCcw, Terminal, X } from "lucide-react";
 import type { Finding, RunLogLine, RunStage } from "@/lib/types";
 import { initialStages, subscribeToRun, TOTAL_MS, type RunEvent } from "@/lib/run-stream";
-import { cancelRun, createRun } from "@/lib/api/runs";
+import { cancelRun, createRun, getRun, type RunDetail } from "@/lib/api/runs";
+import { listRepositories, type RepositorySummary } from "@/lib/api/repositories";
+import { useActiveProject } from "@/lib/active-project";
 import { USE_FIXTURES } from "@/lib/api/config";
 import { REPO, SCORE } from "@/data/repo";
 import { cn, formatDuration, labelForEngine, scoreColorVar, severityMeta } from "@/lib/utils";
 import { countUp, expandCollapse, streamIn, transition } from "@/lib/motion";
 import { Button, Eyebrow, Panel } from "@/components/ui/primitives";
 import { SeverityGlyph } from "@/components/severity";
+import { StageGlyph } from "./stage-glyph";
 
 /* ============================================================================
    Run screen.
@@ -33,6 +29,10 @@ import { SeverityGlyph } from "@/components/severity";
 
 export function RunScreen() {
   const reduce = useReducedMotion();
+  // Which project this run analyses. Null until the effect that reads
+  // localStorage has run, which is why the run is keyed on it below rather
+  // than started unconditionally on mount.
+  const [activeProjectId] = useActiveProject();
   const [stages, setStages] = React.useState<RunStage[]>(initialStages);
   const [found, setFound] = React.useState<Finding[]>([]);
   const [logs, setLogs] = React.useState<RunLogLine[]>([]);
@@ -42,6 +42,10 @@ export function RunScreen() {
   const [runKey, setRunKey] = React.useState(0);
   const [elapsed, setElapsed] = React.useState(0);
   const [runId, setRunId] = React.useState<string | null>(null);
+  /** The persisted run, fetched once `done` arrives. Authoritative for score. */
+  const [runDetail, setRunDetail] = React.useState<RunDetail | null>(null);
+  /** The project being analysed — for the header identity. */
+  const [repo, setRepo] = React.useState<RepositorySummary | null>(null);
   /** Connection problem. `willRetry` means EventSource is already reconnecting. */
   const [connError, setConnError] = React.useState<{ message: string; willRetry: boolean } | null>(
     null
@@ -58,11 +62,16 @@ export function RunScreen() {
     setElapsed(0);
     setRunId(null);
 
+    setRunDetail(null);
+
     const t0 = performance.now();
     const tick = window.setInterval(() => setElapsed(performance.now() - t0), 100);
     // Guards against a late async resolve writing state after unmount, and
     // against StrictMode's double-invoke starting two runs in development.
     let disposed = false;
+    // Captured in the `done` handler, which closes over this effect and cannot
+    // see the `runId` state set later in the same tick.
+    let startedRunId: string | null = null;
 
     const handlers = {
       onEvent: (e: RunEvent) => {
@@ -79,6 +88,20 @@ export function RunScreen() {
           setDone(true);
           setConnError(null);
           window.clearInterval(tick);
+          // Fetch the authoritative record. The `done` event carries a score,
+          // but the gate, rating and real wall-clock duration live on the run —
+          // and this card must never render a number the database disagrees
+          // with.
+          if (startedRunId) {
+            void getRun(startedRunId)
+              .then((detail) => {
+                if (!disposed) setRunDetail(detail);
+              })
+              .catch(() => {
+                /* The stream already told us it finished; the card degrades to
+                   the streamed score rather than showing an error. */
+              });
+          }
         }
       },
       onError: (err: { message: string; willRetry: boolean }) => setConnError(err),
@@ -86,10 +109,20 @@ export function RunScreen() {
 
     if (USE_FIXTURES) {
       stopRef.current = subscribeToRun("fixture", handlers);
+    } else if (!activeProjectId) {
+      // Nothing to analyse. Say so rather than firing a request that can only
+      // fail — "no project selected" is a state the user can act on, and a
+      // network error is not.
+      setConnError({
+        message: "No project selected. Connect a folder on the Repositories page first.",
+        willRetry: false,
+      });
+      window.clearInterval(tick);
     } else {
-      void createRun({ mode: "snippet", source: "// paste code here", language: "javascript" })
+      void createRun({ mode: "local", repoId: activeProjectId })
         .then((run) => {
           if (disposed) return;
+          startedRunId = run.runId;
           setRunId(run.runId);
           stopRef.current = subscribeToRun(run.runId, handlers);
         })
@@ -106,7 +139,46 @@ export function RunScreen() {
       stopRef.current = null;
       window.clearInterval(tick);
     };
-  }, [runKey]);
+    // `activeProjectId` is a dependency, not just a read: it arrives from
+    // localStorage one tick after mount, and without it here the first render's
+    // null would permanently latch the "no project selected" branch.
+  }, [runKey, activeProjectId]);
+
+  /**
+   * Which project this run is about.
+   *
+   * Fetched separately from the run because the header must be correct from the
+   * first frame — waiting for the run to finish before naming the repository
+   * would leave "Analysing" with no subject for the whole run.
+   */
+  React.useEffect(() => {
+    if (USE_FIXTURES || !activeProjectId) return;
+    let disposed = false;
+    void listRepositories()
+      .then((all) => {
+        if (!disposed) setRepo(all.find((r) => r.id === activeProjectId) ?? null);
+      })
+      .catch(() => {
+        /* The subtitle degrades to the branch alone. Not worth an error state. */
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [activeProjectId]);
+
+  /**
+   * `repo · branch · commit`.
+   *
+   * In fixture mode this is the sample project. With a real run it must be the
+   * real one: the header previously always read the `REPO` fixture, so a run
+   * over a local folder announced itself as "acme/checkout-service ·
+   * feat/order-search · e91c4ad" — a repository that does not exist.
+   */
+  const subtitle = USE_FIXTURES
+    ? `${REPO.name} · ${REPO.branch} · ${REPO.commit}`
+    : [repo?.name ?? "Project", runDetail?.branch ?? repo?.branch, runDetail?.commitSha]
+        .filter(Boolean)
+        .join(" · ");
 
   const totalFindings = found.length;
   const activeStage = stages.find((s) => s.status === "active");
@@ -136,13 +208,17 @@ export function RunScreen() {
               {cancelled ? "Run cancelled" : done ? "Analysis complete" : "Analysing"}
             </h1>
             <p className="mt-0.5 truncate font-mono text-2xs text-fg-muted">
-              {REPO.name} · {REPO.branch} · {REPO.commit}
+              {subtitle}
             </p>
           </div>
 
           <div className="flex items-center gap-2">
+            {/* While running this is an ESTIMATE (the fixture simulator's
+                3.2× scale). Once the run lands, the database's real wall-clock
+                replaces it — a screen that keeps showing the estimate after the
+                fact is reporting a number nothing produced. */}
             <span className="tnum text-sm text-fg-secondary" data-metric>
-              {formatDuration(Math.round(elapsed * 3.2))}
+              {formatDuration(runDetail?.durationMs ?? Math.round(elapsed * 3.2))}
             </span>
             {done || cancelled ? (
               <Button variant="secondary" size="sm" onClick={() => setRunKey((k) => k + 1)}>
@@ -157,7 +233,11 @@ export function RunScreen() {
             )}
             {done ? (
               <Button variant="primary" size="sm" asChild>
-                <Link href="/reviews">Open review</Link>
+                {/* Carry the repo through — /reviews with no ?repo renders the
+                    fixture review, which after a real run is the wrong screen. */}
+                <Link href={activeProjectId ? `/reviews?repo=${activeProjectId}` : "/reviews"}>
+                  Open review
+                </Link>
               </Button>
             ) : null}
           </div>
@@ -170,7 +250,7 @@ export function RunScreen() {
             : connError && !connError.willRetry
               ? `Connection failed. ${connError.message}`
               : done
-                ? `Analysis complete. ${totalFindings} findings. Quality score ${SCORE.overall} out of 100.`
+                ? `Analysis complete. ${totalFindings} findings. Quality score ${runDetail?.score ?? SCORE.overall} out of 100.`
                 : `${activeStage?.label ?? "Starting"}. ${totalFindings} findings so far.`}
         </div>
 
@@ -261,7 +341,7 @@ export function RunScreen() {
                   transition={transition.element}
                   className="mt-4"
                 >
-                  <ScoreLanding />
+                  <ScoreLanding run={USE_FIXTURES ? null : runDetail} />
                 </motion.div>
               ) : null}
             </AnimatePresence>
@@ -432,56 +512,38 @@ function StageRow({ stage, last }: { stage: RunStage; last: boolean }) {
   );
 }
 
-function StageGlyph({ status }: { status: RunStage["status"] }) {
-  if (status === "complete") {
-    return (
-      <span className="z-10 flex h-4 w-4 items-center justify-center rounded-full bg-canvas">
-        <Check size={12} style={{ color: "var(--sev-success)" }} aria-hidden />
-        <span className="sr-only">Complete</span>
-      </span>
-    );
-  }
-  if (status === "degraded") {
-    return (
-      <span className="z-10 flex h-4 w-4 items-center justify-center rounded-full bg-canvas">
-        <AlertTriangle size={11} style={{ color: "var(--sev-medium)" }} aria-hidden />
-        <span className="sr-only">Degraded</span>
-      </span>
-    );
-  }
-  if (status === "failed") {
-    return (
-      <span className="z-10 flex h-4 w-4 items-center justify-center rounded-full bg-canvas">
-        <X size={12} style={{ color: "var(--sev-critical)" }} aria-hidden />
-        <span className="sr-only">Failed</span>
-      </span>
-    );
-  }
-  if (status === "active") {
-    return (
-      <span className="z-10 flex h-4 w-4 items-center justify-center rounded-full bg-canvas">
-        <span className="h-[7px] w-[7px] rounded-full bg-[var(--text-primary)]" />
-        <span className="sr-only">Running</span>
-      </span>
-    );
-  }
-  return (
-    <span className="z-10 flex h-4 w-4 items-center justify-center rounded-full bg-canvas">
-      <span className="h-[6px] w-[6px] rounded-full border border-[var(--border-strong)]" />
-      <span className="sr-only">Pending</span>
-    </span>
-  );
-}
-
 /* -- score ------------------------------------------------------------------ */
 
-function ScoreLanding() {
+/**
+ * ⚠️ EVERY NUMBER HERE MUST COME FROM THE RUN THAT JUST FINISHED.
+ *
+ * This card previously read the `SCORE` fixture, so a real run that scored 100
+ * with a passing gate rendered "34/100 · Quality gate failed · 4 of 5
+ * conditions". The score is the one number this product asks users to trust;
+ * showing a fabricated failing gate over a real passing run is worse than
+ * showing nothing, because it is confidently wrong.
+ */
+function ScoreLanding({ run }: { run: RunDetail | null }) {
   const reduce = useReducedMotion();
-  const [value, setValue] = React.useState(reduce ? SCORE.overall : 0);
+
+  // Fixture mode keeps the designed sample card. With a real run and no score
+  // yet (cancelled, or failed before scoring) we render nothing rather than a
+  // zero — 0/100 is a verdict, and "we did not get that far" is not.
+  const overall = run ? run.score : SCORE.overall;
+  const [value, setValue] = React.useState(reduce ? (overall ?? 0) : 0);
 
   React.useEffect(() => {
-    return countUp(0, SCORE.overall, (v) => setValue(v), { duration: 0.4, reduced: !!reduce });
-  }, [reduce]);
+    if (overall === null) return;
+    return countUp(0, overall, (v) => setValue(v), { duration: 0.4, reduced: !!reduce });
+  }, [reduce, overall]);
+
+  if (overall === null) return null;
+
+  const gate = run ? run.gate : SCORE.gate;
+  const passed = gate?.conditions.filter((c) => c.status === "passed").length ?? 0;
+  const total = gate?.conditions.length ?? 0;
+  const baseline = run ? run.branch : SCORE.baseline;
+  const delta = run ? 0 : SCORE.delta;
 
   return (
     <div className="rounded-lg border border-subtle bg-surface p-3">
@@ -490,7 +552,7 @@ function ScoreLanding() {
           <span
             className="tnum text-2xl font-semibold leading-none"
             data-metric
-            style={{ color: scoreColorVar(SCORE.overall) }}
+            style={{ color: scoreColorVar(overall) }}
           >
             {Math.round(value)}
           </span>
@@ -498,10 +560,30 @@ function ScoreLanding() {
         </div>
         <div className="min-w-0">
           <p className="text-sm text-fg">
-            <span className="tnum text-critical-fg">−{Math.abs(SCORE.delta)}</span> against{" "}
-            {SCORE.baseline}
+            {/* A first run has nothing to compare against. "−0 against main" on
+                a brand-new project reads as a regression that never happened. */}
+            {delta !== 0 ? (
+              <>
+                <span
+                  className="tnum"
+                  style={{
+                    color: delta < 0 ? "var(--sev-critical-fg)" : "var(--sev-success-fg)",
+                  }}
+                >
+                  {delta < 0 ? "−" : "+"}
+                  {Math.abs(delta)}
+                </span>{" "}
+                against {baseline}
+              </>
+            ) : (
+              <span className="text-fg-secondary">on {baseline}</span>
+            )}
           </p>
-          <p className="text-2xs text-fg-muted">Quality gate failed · 4 of 5 conditions</p>
+          <p className="text-2xs text-fg-muted">
+            {gate
+              ? `Quality gate ${gate.status} · ${passed} of ${total} conditions`
+              : "No quality gate evaluated"}
+          </p>
         </div>
       </div>
     </div>

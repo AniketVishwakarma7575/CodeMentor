@@ -1,13 +1,14 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { FileCode2, Filter, RotateCcw, Undo2 } from "lucide-react";
 import type { TokenLine } from "@/lib/highlight";
-import type { Finding, Severity } from "@/lib/types";
+import type { FileNode, Finding, RunStage, Severity } from "@/lib/types";
 import { FINDINGS } from "@/data/findings";
-import { FILE_TREE, REPO, SCORE } from "@/data/repo";
+import { FILE_TREE, REPO, RUN_DURATION_MS, RUN_STAGES, SCORE } from "@/data/repo";
 import { ORDERS_LOC } from "@/data/source";
 import { cn, severityMeta, truncatePath } from "@/lib/utils";
 import { isTypingTarget } from "@/lib/shortcuts";
@@ -17,25 +18,115 @@ import { SeverityGlyph } from "@/components/severity";
 import { FileTree } from "./file-tree";
 import { CodeViewer } from "./code-viewer";
 import { FindingCard } from "./finding-card";
-import { NoFindings, NoSelection } from "./states";
+import { FileNotShown, NoFindings, NoSelection } from "./states";
 
 const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "info"];
 
+/**
+ * Everything that differs between a real run and the fixture screen.
+ *
+ * Defaulted rather than required so `NEXT_PUBLIC_USE_FIXTURES=true` still
+ * renders the designed screen with no props — the fixtures are the offline and
+ * design mode, not dead code.
+ */
+export interface ReviewSubject {
+  findings?: Finding[];
+  fileTree?: FileNode[];
+  loc?: number;
+  fileCount?: number;
+  /** The server walk was cut short — `fileCount` is a floor, shown as "n+". */
+  filesTruncated?: boolean;
+  /** The run's stages, verbatim — the evidence behind "no findings here". */
+  stages?: RunStage[];
+  /** Wall-clock for the whole run. */
+  runDurationMs?: number | null;
+  score?: number;
+  scoreDelta?: number;
+  scoreBaseline?: string;
+  /** Repo id — lets the workspace re-run analysis from the header. */
+  repoId?: string;
+}
+
 export function ReviewWorkspace({
   sourceTokens,
+  sourceFile,
+  sourceUnavailable = false,
   fixTokens,
   initialFinding,
   initialFile,
+  subject = {},
 }: {
   sourceTokens: TokenLine[];
+  /**
+   * The path `sourceTokens` were highlighted from.
+   *
+   * Not the same thing as `initialFile`, and the difference is load-bearing:
+   * the code pane holds exactly one file's tokens, so it may only be drawn
+   * when the selected path is that file. In fixture mode only one file's
+   * source is in the bundle, so this stays pinned to it while the tree
+   * selection moves freely.
+   */
+  sourceFile: string;
+  /**
+   * `sourceFile` is in the tree but its bytes could not be shown — a binary, a
+   * file over the size ceiling, or one deleted since the walk. Listing every
+   * file in the project means the user can click these, and "cannot display"
+   * is a far better answer than an empty pane or a failed page.
+   */
+  sourceUnavailable?: boolean;
   fixTokens: Record<string, TokenLine[]>;
   initialFinding: string | null;
   initialFile: string;
+  subject?: ReviewSubject;
 }) {
   const reduce = useReducedMotion();
 
-  const [findings, setFindings] = React.useState<Finding[]>(FINDINGS);
-  const [file, setFile] = React.useState(initialFile);
+  const fileTree = subject.fileTree ?? FILE_TREE;
+  const loc = subject.loc ?? ORDERS_LOC;
+  const fileCount = subject.fileCount ?? REPO.files;
+  const filesTruncated = subject.filesTruncated ?? false;
+  /* The fixture duration is keyed to the presence of fixture STAGES, not to
+     `runDurationMs ?? …`. A real run that was cancelled before it finished has
+     a null duration, and `??` would quietly dress it in the sample's 62s. */
+  const stages = subject.stages ?? RUN_STAGES;
+  const runDurationMs = subject.stages ? (subject.runDurationMs ?? null) : RUN_DURATION_MS;
+  const overallScore = subject.score ?? SCORE.overall;
+  const scoreDelta = subject.scoreDelta ?? SCORE.delta;
+  const scoreBaseline = subject.scoreBaseline ?? SCORE.baseline;
+
+  const [findings, setFindings] = React.useState<Finding[]>(subject.findings ?? FINDINGS);
+  const [file, setFileState] = React.useState(initialFile);
+  const [loadingFile, startFileLoad] = React.useTransition();
+  const router = useRouter();
+
+  /**
+   * Selecting a file.
+   *
+   * With real data the source has to be fetched AND syntax-highlighted, both of
+   * which happen on the server (Shiki must never enter the browser bundle), so
+   * this is a real navigation. In fixture mode there is only one file's source
+   * in the bundle, so it stays local state and the navigation would 404.
+   *
+   * Wrapped in a transition so the pane keeps showing the file it has while the
+   * next one is fetched. Without it every click through the tree flashes an
+   * empty state for the length of a round trip — which reads as "this file has
+   * nothing in it" rather than "still loading".
+   */
+  const setFile = React.useCallback(
+    (next: string) => {
+      setFileState(next);
+      if (!subject.repoId) return;
+      const url = new URL(window.location.href);
+      url.searchParams.set("file", next);
+      url.searchParams.delete("finding");
+      startFileLoad(() => router.push(`${url.pathname}${url.search}`));
+    },
+    [router, subject.repoId]
+  );
+
+  /* The server is the source of truth for which file is open: the back button
+     and a pasted ?file= both arrive as a new prop, not as a click. */
+  React.useEffect(() => setFileState(initialFile), [initialFile]);
   const [sevFilter, setSevFilter] = React.useState<Set<Severity>>(new Set());
   const [statusFilter, setStatusFilter] = React.useState<"open" | "all">("open");
   const [categoryFilter, setCategoryFilter] = React.useState<string | null>(null);
@@ -66,12 +157,32 @@ export function ReviewWorkspace({
   const visible = React.useMemo(
     () =>
       findings
+        // The code pane shows ONE file, so a finding in another file would
+        // point at a line the user cannot see. In fixture mode every finding is
+        // already in the open file, so this changes nothing there.
+        .filter((f) => f.file === file)
         .filter((f) => (statusFilter === "open" ? f.status === "open" || f.status === "applied" : true))
         .filter((f) => (sevFilter.size === 0 ? true : sevFilter.has(f.severity)))
         .filter((f) => (categoryFilter ? f.category === categoryFilter : true))
         .sort((a, b) => severityMeta[a.severity].rank - severityMeta[b.severity].rank || a.line - b.line),
-    [findings, sevFilter, statusFilter, categoryFilter]
+    [findings, file, sevFilter, statusFilter, categoryFilter]
   );
+
+  /** Open findings in other files — counted here, never summed off the stages. */
+  const elsewhere = React.useMemo(
+    () =>
+      findings.filter(
+        (f) => f.file !== file && f.status !== "dismissed" && f.status !== "snoozed"
+      ).length,
+    [findings, file]
+  );
+
+  /* ---- what the code pane is allowed to draw -----------------------------
+     `sourceFile` is the file the tokens came from; `file` is the selection.
+     They differ only while a navigation is in flight (stale) or, in fixture
+     mode, whenever the tree points somewhere the bundle has no source for. */
+  const isStale = loadingFile && file !== sourceFile;
+  const showsSource = file === sourceFile || loadingFile;
 
   const selected = visible.find((f) => f.id === selectedId) ?? null;
   const counts = React.useMemo(() => {
@@ -216,7 +327,7 @@ export function ReviewWorkspace({
         <FileCode2 size={13} className="shrink-0 text-fg-muted" aria-hidden />
         <h1 className="truncate font-mono text-sm text-fg">{file}</h1>
         <span className="tnum hidden shrink-0 font-mono text-2xs text-fg-faint sm:inline">
-          {ORDERS_LOC.toLocaleString()} lines
+          {loc.toLocaleString()} lines
         </span>
         <span className="hidden items-center gap-1.5 pl-1 sm:flex">
           {SEVERITIES.filter((s) => counts[s]).map((s) => (
@@ -231,10 +342,23 @@ export function ReviewWorkspace({
           <span className="hidden text-2xs text-fg-muted lg:inline">
             Quality score{" "}
             <span className="tnum font-medium text-fg" data-metric>
-              {SCORE.overall}
+              {overallScore}
             </span>
-            <span className="tnum text-critical-fg"> −{Math.abs(SCORE.delta)}</span>{" "}
-            <span className="text-fg-faint">vs {SCORE.baseline}</span>
+            {/* A zero delta is not a regression — rendering "−0" in critical red
+                on a first-ever run reads as a failure that did not happen. */}
+            {scoreDelta !== 0 ? (
+              <span
+                className="tnum"
+                style={{
+                  color: scoreDelta < 0 ? "var(--sev-critical-fg)" : "var(--sev-success-fg)",
+                }}
+              >
+                {" "}
+                {scoreDelta < 0 ? "−" : "+"}
+                {Math.abs(scoreDelta)}
+              </span>
+            ) : null}{" "}
+            <span className="text-fg-faint">vs {scoreBaseline}</span>
           </span>
           <Button variant="secondary" size="xs">
             <RotateCcw size={11} aria-hidden />
@@ -320,29 +444,62 @@ export function ReviewWorkspace({
               <span className="text-2xs font-medium uppercase tracking-[0.04em] text-fg-faint">
                 Files
               </span>
-              <span className="tnum text-2xs text-fg-faint">{REPO.files}</span>
+              {/* "+" when the server walk hit its ceiling. The count is then a
+                  floor, and a flat number would claim the tree is complete. */}
+              <Tooltip
+                content={
+                  filesTruncated
+                    ? "The folder walk stopped at its file limit — more files exist than are listed."
+                    : `${fileCount.toLocaleString()} files in this project`
+                }
+                side="left"
+              >
+                <span className="tnum text-2xs text-fg-faint">
+                  {fileCount.toLocaleString()}
+                  {filesTruncated ? "+" : ""}
+                </span>
+              </Tooltip>
             </div>
 
-            <FileTree nodes={FILE_TREE} selectedPath={file} onSelect={setFile} className="flex-1" />
+            <FileTree nodes={fileTree} selectedPath={file} onSelect={setFile} className="flex-1" />
           </div>
         </Panel>
 
         <ResizeHandle />
 
-        {/* ---- center: code ------------------------------------------------- */}
+        {/* ---- center: code -------------------------------------------------
+            The pane holds ONE file's tokens, so it may only draw itself when
+            the selection is that file. While the next one is being fetched it
+            keeps showing the current source, dimmed and un-annotated: the
+            findings belong to the incoming file and would otherwise be pinned
+            to whatever happens to be on those line numbers here. */}
         <Panel defaultSize={49} minSize={28}>
-          {file === "src/routes/orders.js" ? (
-            <CodeViewer
-              tokens={sourceTokens}
-              findings={visible}
-              selectedId={selectedId}
-              onSelect={setSelected}
-              filePath={file}
-              className="h-full"
-            />
+          {showsSource ? (
+            <div
+              className={cn("h-full transition-opacity duration-150", isStale && "opacity-50")}
+              aria-busy={isStale || undefined}
+            >
+              {sourceUnavailable ? (
+                <FileNotShown file={sourceFile} />
+              ) : (
+                <CodeViewer
+                  tokens={sourceTokens}
+                  findings={isStale ? [] : visible}
+                  selectedId={isStale ? null : selectedId}
+                  onSelect={setSelected}
+                  filePath={sourceFile}
+                  className="h-full"
+                />
+              )}
+            </div>
           ) : (
             <div className="h-full bg-inset">
-              <NoFindings file={truncatePath(file, 4)} />
+              <NoFindings
+                file={truncatePath(file, 4)}
+                stages={stages}
+                durationMs={runDurationMs}
+                elsewhere={elsewhere}
+              />
             </div>
           )}
         </Panel>
@@ -404,7 +561,7 @@ export function ReviewWorkspace({
                   />
                 </motion.div>
               ) : visible.length === 0 ? (
-                <NoFindings file={file} />
+                <NoFindings file={file} stages={stages} durationMs={runDurationMs} elsewhere={elsewhere} />
               ) : (
                 <NoSelection count={visible.length} />
               )}
