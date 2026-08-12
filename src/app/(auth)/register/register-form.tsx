@@ -44,9 +44,24 @@ export function RegisterForm() {
     setError(null);
 
     try {
-      await register({ email, password: value, ...(displayName ? { displayName } : {}) });
+      const user = await register({
+        email,
+        password: value,
+        ...(displayName ? { displayName } : {}),
+      });
+      // Held true through the navigation so the button does not flick back to
+      // its idle state while the next route resolves.
       setDone(true);
-      router.replace("/repositories");
+
+      /* ⚠️ TO SIGN IN, NOT INTO THE APP.
+         Registering issues no session — the flow is register → sign in — so
+         pushing to /repositories would land on the middleware's redirect back
+         to /login, and the account they just made would look like it failed.
+
+         The email rides along so they do not retype what they typed ten
+         seconds ago; the password deliberately does not. */
+      const params = new URLSearchParams({ reason: "registered", email: user.email });
+      router.replace(`/login?${params.toString()}`);
       router.refresh();
     } catch (err) {
       setPending(false);

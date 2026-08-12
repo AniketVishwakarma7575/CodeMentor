@@ -67,6 +67,17 @@ export function FindingCard({
   const [showFlow, setShowFlow] = React.useState(false);
   const reduce = useReducedMotion();
   const applied = finding.status === "applied";
+  /** Only a mechanical patch can be written to the file — see the footer. */
+  const committable = Boolean(finding.fix?.committable);
+  /**
+   * The verification loop applied this patch to a copy and found a problem.
+   *
+   * The server refuses to write a patch carrying a failed check, so the button
+   * must not offer to. The failing row is already rendered in red under the
+   * diff — this is why it is worth reading rather than a badge to skim past.
+   */
+  const rejected = finding.verification.some((c) => c.state === "failed");
+  const canApply = Boolean(finding.fix) && !rejected;
 
   return (
     <motion.article
@@ -359,18 +370,39 @@ export function FindingCard({
         <div className="h-2" />
       </div>
 
-      {/* ---- 8. actions — pinned, always reachable ------------------------- */}
+      {/* ---- 8. actions — pinned, always reachable -------------------------
+          ⚠️ The button is disabled for a patch that is not `committable`, and
+             says why. The server refuses those (a suggestion needing an import
+             or a signature change cannot be applied unattended), so leaving it
+             enabled would offer an action guaranteed to fail — the reader would
+             click, get a red toast, and learn nothing the card could not have
+             told them before they clicked. */}
       <footer className="flex shrink-0 items-center gap-1.5 border-t border-subtle bg-surface px-3 py-2">
         <Button
           variant="primary"
           size="sm"
           onClick={onApply}
-          disabled={applied || !finding.fix}
+          disabled={applied || rejected || !finding.fix}
+          title={
+            rejected
+              ? "This patch failed verification, so it will not be written."
+              : finding.fix && !finding.fix.committable
+                ? "This is a suggested patch. Apply it, then review the code before committing."
+                : undefined
+          }
           className="gap-1.5"
         >
           {applied ? <Check size={13} aria-hidden /> : <Sparkle size={13} aria-hidden />}
-          {applied ? "Fix applied" : "Apply fix"}
-          {!applied ? <Kbd className="ml-0.5 border-transparent bg-transparent text-fg-inverse/60">a</Kbd> : null}
+          {applied
+            ? "Fix applied"
+            : rejected
+              ? "Failed verification"
+              : committable
+                ? "Apply fix"
+                : "Apply suggestion"}
+          {!applied && canApply ? (
+            <Kbd className="ml-0.5 border-transparent bg-transparent text-fg-inverse/60">a</Kbd>
+          ) : null}
         </Button>
         <Button variant="secondary" size="sm" onClick={onToggleExpand}>
           Explain more
@@ -433,8 +465,22 @@ function Column({ label, text, accent }: { label: string; text: string; accent?:
  * Verification.
  * A tick is never the only signal — the state also changes the glyph and the
  * label prefix, so a failed check is unmistakable in greyscale.
+ *
+ * ⚠️ RENDERS NOTHING WHEN NOTHING WAS VERIFIED.
+ *
+ *    The verify stage degrades on every run today (the worktree loop is
+ *    Milestone 9), so the backend persists `verification: []` and this row was
+ *    drawing an empty strip under every patch — a checklist with no checks,
+ *    which reads as "verified, no issues" rather than "not verified".
+ *
+ *    An empty array is the honest input; the honest output is silence. The run
+ *    screen already reports the stage as degraded and says why, which is where
+ *    a reader should learn that verification did not happen — not from an
+ *    ambiguous gap under a diff.
  */
 function VerificationRow({ checks }: { checks: VerificationCheck[] }) {
+  if (checks.length === 0) return null;
+
   const failed = checks.filter((c) => c.state === "failed");
 
   return (

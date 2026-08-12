@@ -46,6 +46,10 @@ export default async function SettingsPage({
   ]);
 
   const active = engines?.filter((e) => e.status === "active") ?? [];
+  // Implemented but inert. Kept in its own group rather than lumped with
+  // `planned`, because the two call for opposite responses: one is waiting on
+  // the reader to supply a key, the other on us to write the adapter.
+  const configured = engines?.filter((e) => e.status === "configured") ?? [];
   const planned = engines?.filter((e) => e.status === "planned") ?? [];
 
   return (
@@ -80,6 +84,20 @@ export default async function SettingsPage({
                   <EngineRow key={e.id} engine={e} />
                 ))}
               </ul>
+
+              {configured.length > 0 ? (
+                <>
+                  <p className="mt-3 text-2xs text-fg-faint">
+                    Built, but switched off — these did not run on the last analysis because a
+                    credential is missing. Supplying it is all they need.
+                  </p>
+                  <ul className="mt-1.5 divide-y divide-[var(--border-subtle)] rounded-lg border border-subtle bg-surface">
+                    {configured.map((e) => (
+                      <EngineRow key={e.id} engine={e} />
+                    ))}
+                  </ul>
+                </>
+              ) : null}
 
               <p className="mt-3 text-2xs text-fg-faint">
                 Not implemented yet — these do not run, and no finding on any screen came from
@@ -128,14 +146,35 @@ export default async function SettingsPage({
   );
 }
 
+/**
+ * One engine.
+ *
+ * Three states, three labels — and the dot is never the only signal, because a
+ * reader in greyscale must still be able to tell "ran" from "did not run".
+ * `configured` gets its own amber dot rather than the green one: it is not
+ * running, and a green dot next to an engine that produced nothing is the
+ * original lie in a smaller font.
+ */
 function EngineRow({ engine }: { engine: EngineInfo }) {
   const on = engine.status === "active";
+  const label = on ? "Running" : engine.status === "configured" ? "Needs key" : "Planned";
+  const colour = on
+    ? "var(--sev-success)"
+    : engine.status === "configured"
+      ? "var(--sev-medium)"
+      : "var(--text-faint)";
+  const textColour = on
+    ? "var(--sev-success-fg)"
+    : engine.status === "configured"
+      ? "var(--sev-medium-fg)"
+      : "var(--text-faint)";
+
   return (
     <li className="flex items-center gap-3 px-3 py-2.5">
       <span
         aria-hidden
         className="h-1.5 w-1.5 shrink-0 rounded-full"
-        style={{ background: on ? "var(--sev-success)" : "var(--text-faint)" }}
+        style={{ background: colour }}
       />
       <div className="min-w-0 flex-1">
         <p className="text-sm text-fg">{engine.displayName}</p>
@@ -144,11 +183,8 @@ function EngineRow({ engine }: { engine: EngineInfo }) {
       <span className="tnum shrink-0 font-mono text-2xs text-fg-faint">
         {engine.ruleCount != null ? pluralize(engine.ruleCount, "rule") : "—"}
       </span>
-      <span
-        className="w-16 shrink-0 text-right text-2xs"
-        style={{ color: on ? "var(--sev-success-fg)" : "var(--text-faint)" }}
-      >
-        {on ? "Running" : "Planned"}
+      <span className="w-16 shrink-0 text-right text-2xs" style={{ color: textColour }}>
+        {label}
       </span>
     </li>
   );

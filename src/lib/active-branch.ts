@@ -64,3 +64,12 @@ export function useActiveBranch(
 
   return [branch, select];
 }
+
+export function resetActiveBranches(): void {
+  try {
+    window.localStorage.removeItem(KEY);
+  } catch {
+    // Branch choice is a convenience. If storage is unavailable, there is no
+    // persisted value to clear.
+  }
+}

@@ -4,9 +4,12 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { FileCode2, Filter, RotateCcw, Undo2 } from "lucide-react";
+import { AlertTriangle, FileCode2, Filter, RotateCcw, Undo2, X } from "lucide-react";
 import type { TokenLine } from "@/lib/highlight";
 import type { FileNode, Finding, RunStage, Severity } from "@/lib/types";
+import { ApiError } from "@/lib/api/client";
+import { USE_FIXTURES } from "@/lib/api/config";
+import { applyFinding, setFindingStatus } from "@/lib/api/findings";
 import { FINDINGS } from "@/data/findings";
 import { FILE_TREE, REPO, RUN_DURATION_MS, RUN_STAGES, SCORE } from "@/data/repo";
 import { ORDERS_LOC } from "@/data/source";
@@ -21,6 +24,16 @@ import { FindingCard } from "./finding-card";
 import { FileNotShown, NoFindings, NoSelection } from "./states";
 
 const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "info"];
+
+/**
+ * How long a snooze lasts.
+ *
+ * The backend refuses a snooze with no end date, on the grounds that one is a
+ * dismissal wearing a friendlier word. Two weeks is long enough to get a
+ * release out and short enough that the finding comes back while the code is
+ * still familiar.
+ */
+const SNOOZE_DAYS = 14;
 
 /**
  * Everything that differs between a real run and the fixture screen.
@@ -133,6 +146,15 @@ export function ReviewWorkspace({
   const [expanded, setExpanded] = React.useState(false);
   const [revealDiffFor, setRevealDiffFor] = React.useState<string | null>(null);
   const [undo, setUndo] = React.useState<{ finding: Finding; label: string } | null>(null);
+  /**
+   * The reason a write was rejected, shown verbatim.
+   *
+   * The server's refusals are written for this reader — "line 41 has changed
+   * since this was analysed", "this suggestion needs a judgement call" — and
+   * each one names the next step. Replacing them with a generic failure toast
+   * would throw away the only part of the error that helps.
+   */
+  const [error, setError] = React.useState<string | null>(null);
 
   /* ---- selection lives in the URL ----------------------------------------
      Every view in this product must be pasteable into a PR comment. The
@@ -194,7 +216,21 @@ export function ReviewWorkspace({
     return c;
   }, [findings]);
 
-  /* ---- mutations ---------------------------------------------------------- */
+  /* ---- mutations ----------------------------------------------------------
+
+     ── EVERY ACTION HERE PERSISTS, AND THAT IS NEW ──
+
+     All three of these used to be `setFindings` and nothing else. "Apply fix"
+     set `status: "applied"` in React state, rendered a green tick and the words
+     "Fix applied", and left the file on disk untouched; dismiss and snooze
+     vanished on reload. `setFindingStatus` existed in the API client the whole
+     time with zero callers.
+
+     The shape below is optimistic-then-reconcile, because triage is a
+     keyboard-speed activity (j, k, x, s) and a round trip per keystroke is
+     visible lag. The rule that makes optimism honest is that a REJECTED write
+     must put the row back exactly as it was and say why — a silent revert is
+     the same lie in a different direction.                                   */
 
   const mutate = React.useCallback(
     (id: string, patch: Partial<Finding>, undoLabel?: string) => {
@@ -207,25 +243,96 @@ export function ReviewWorkspace({
     []
   );
 
+  /** Put a finding back exactly as it was, and surface the server's reason. */
+  const revert = React.useCallback((before: Finding, err: unknown) => {
+    setFindings((prev) => prev.map((f) => (f.id === before.id ? before : f)));
+    setUndo(null);
+    setError(
+      err instanceof ApiError
+        ? err.message
+        : "Could not reach the API, so nothing was changed."
+    );
+  }, []);
+
+  /**
+   * Apply the patch.
+   *
+   * ⚠️ In fixture mode this stays local — there is no repository on disk to
+   *    write to, and the fixtures are the design surface. Everywhere else the
+   *    server writes the file first and only then records the status, so a
+   *    finding marked applied is one whose patch is really in the code.
+   */
   const applyFix = React.useCallback(
     (id: string) => {
+      const before = findings.find((f) => f.id === id);
+      if (!before) return;
+
+      setError(null);
       setRevealDiffFor(id);
-      mutate(id, { status: "applied" }, "Fix applied");
+      // ⚠️ Deliberately NO undo entry. Dismiss and snooze are status changes
+      //    this app can take back; applying a fix edits a file on disk, and an
+      //    "Undo" button that only flips a database row back to `open` would
+      //    promise to un-write code it cannot un-write. The user's VCS is the
+      //    undo here, and pretending otherwise is worse than offering nothing.
+      mutate(id, { status: "applied" });
       window.setTimeout(() => setRevealDiffFor(null), 900);
+
+      if (USE_FIXTURES) return;
+      applyFinding(id)
+        // Take the server's finding wholesale: it is the record of what was
+        // actually written, and it may differ from the optimistic guess.
+        .then((updated) => setFindings((prev) => prev.map((f) => (f.id === id ? updated : f))))
+        .catch((err: unknown) => revert(before, err));
     },
-    [mutate]
+    [findings, mutate, revert]
   );
 
   /** Move selection *before* removing the row, so focus never lands on nothing. */
   const removeAndAdvance = React.useCallback(
     (id: string, status: "dismissed" | "snoozed", label: string) => {
+      const before = findings.find((f) => f.id === id);
+      if (!before) return;
+
       const idx = visible.findIndex((f) => f.id === id);
       const next = visible[idx + 1] ?? visible[idx - 1] ?? null;
       setSelected(next?.id ?? null);
+      setError(null);
       mutate(id, { status }, label);
+
+      if (USE_FIXTURES) return;
+      setFindingStatus(id, status, {
+        // A snooze with no end is a dismissal in disguise — the backend rejects
+        // one, so the duration is chosen here rather than left undefined.
+        ...(status === "snoozed"
+          ? { snoozeUntil: new Date(Date.now() + SNOOZE_DAYS * 24 * 60 * 60 * 1000) }
+          : {}),
+      }).catch((err: unknown) => revert(before, err));
     },
-    [mutate, setSelected, visible]
+    [findings, mutate, revert, setSelected, visible]
   );
+
+  /**
+   * Take back a dismiss or a snooze.
+   *
+   * Reopens on the server too. Without that the row would come back on screen
+   * and go straight back to dismissed on the next load — which looks like the
+   * undo silently failed, because it did.
+   */
+  const performUndo = React.useCallback(() => {
+    if (!undo) return;
+    const restored = undo.finding;
+    setFindings((prev) => prev.map((f) => (f.id === restored.id ? restored : f)));
+    setUndo(null);
+
+    if (USE_FIXTURES) return;
+    setFindingStatus(restored.id, restored.status).catch((err: unknown) => {
+      setError(
+        err instanceof ApiError
+          ? `Could not reopen this finding — ${err.message}`
+          : "Could not reach the API, so this finding is still dismissed on the server."
+      );
+    });
+  }, [undo]);
 
   const step = React.useCallback(
     (dir: 1 | -1) => {
@@ -245,8 +352,7 @@ export function ReviewWorkspace({
       if (e.metaKey || e.ctrlKey) {
         if (e.key.toLowerCase() === "z" && undo) {
           e.preventDefault();
-          setFindings((prev) => prev.map((f) => (f.id === undo.finding.id ? undo.finding : f)));
-          setUndo(null);
+          performUndo();
         }
         return;
       }
@@ -262,7 +368,15 @@ export function ReviewWorkspace({
           step(-1);
           break;
         case "a":
-          if (selected?.fix && selected.status !== "applied") {
+          // Mirrors the button's own condition: only a committable patch that
+          // passed verification can be written, so `a` on a hand-apply
+          // suggestion — or on one the verify stage rejected — must be a no-op
+          // rather than a keystroke that fires a request the server refuses.
+          if (
+            selected?.fix &&
+            selected.status !== "applied" &&
+            !selected.verification.some((c) => c.state === "failed")
+          ) {
             e.preventDefault();
             applyFix(selected.id);
           }
@@ -306,7 +420,7 @@ export function ReviewWorkspace({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [applyFix, removeAndAdvance, selected, setSelected, step, undo]);
+  }, [applyFix, performUndo, removeAndAdvance, selected, setSelected, step, undo]);
 
   // Selection resets the expanded state — carrying it across findings means the
   // user opens a card already scrolled past the summary they wanted.
@@ -570,6 +684,34 @@ export function ReviewWorkspace({
         </Panel>
       </PanelGroup>
 
+      {/* ---- a rejected write -------------------------------------------------
+          Sits above the undo strip and outranks it: the row has already been
+          put back, so what the reader needs now is the reason, in the server's
+          own words. `alert` rather than `status` — this interrupts, because the
+          thing the user just asked for did not happen. */}
+      <AnimatePresence>
+        {error ? (
+          <motion.div
+            initial={{ opacity: 0, y: reduce ? 0 : 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            role="alert"
+            className="pointer-events-auto fixed bottom-16 left-4 z-40 flex max-w-[440px] items-start gap-2 rounded-lg border border-critical-bd bg-critical-bg px-3 py-2 shadow-[var(--shadow-popover)]"
+          >
+            <AlertTriangle size={13} className="mt-0.5 shrink-0 text-critical-fg" aria-hidden />
+            <p className="min-w-0 flex-1 text-sm leading-[1.45] text-critical-fg">{error}</p>
+            <button
+              onClick={() => setError(null)}
+              aria-label="Dismiss"
+              className="-mr-1 shrink-0 rounded-sm p-0.5 text-critical-fg/70 hover:bg-hover hover:text-critical-fg"
+            >
+              <X size={12} aria-hidden />
+            </button>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
       {/* ---- undo ------------------------------------------------------------
           A destructive-feeling action needs a way back that is not the browser
           back button. Lives bottom-left so it never covers the action row. */}
@@ -584,14 +726,7 @@ export function ReviewWorkspace({
             className="pointer-events-auto fixed bottom-4 left-4 z-40 flex items-center gap-2 rounded-lg border border-strong bg-elevated px-3 py-2 shadow-[var(--shadow-popover)]"
           >
             <span className="text-sm text-fg-secondary">{undo.label}</span>
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => {
-                setFindings((prev) => prev.map((f) => (f.id === undo.finding.id ? undo.finding : f)));
-                setUndo(null);
-              }}
-            >
+            <Button variant="ghost" size="xs" onClick={performUndo}>
               <Undo2 size={11} aria-hidden />
               Undo
               <Kbd className="ml-0.5">⌘Z</Kbd>

@@ -74,3 +74,8 @@ export function selectProject(next: string | null): void {
     // Selection still applies for this session.
   }
 }
+
+export function resetActiveProject(): void {
+  hydrated = false;
+  selectProject(null);
+}

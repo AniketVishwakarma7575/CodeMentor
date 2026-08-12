@@ -246,22 +246,25 @@ function coverageStat() {
 }
 
 /**
- * Duplication is reported as 0% by the gate because the orchestrator passes a
- * literal 0 — jscpd is listed in a repository's enabled engines but no
- * duplication engine runs yet. So the gate row is real (it is what was
- * evaluated) while the measurement behind it is not, and the tile says which.
+ * Duplication is not measured either, and the gate now says so by omission
+ * rather than by scoring it.
+ *
+ * It used to be reported as a flat 0% — the orchestrator passed a literal zero
+ * — which put a row in every gate that read like a measurement and could never
+ * fail. Both are `null` at the source now, so the condition simply is not
+ * there, exactly as with coverage. If jscpd ever does run, the row reappears
+ * with a real number and this tile renders it instead of the dash.
  */
 function duplicationStat(gate: QualityGate | null) {
   const condition = gate?.conditions.find((c) => c.metric.toLowerCase().includes("duplicat"));
+  if (condition) {
+    return <Stat label="Duplication" value={`${condition.actual}%`} note="Measured on this run" />;
+  }
   return (
     <Stat
       label="Duplication"
       value="—"
-      note={
-        condition
-          ? `Not measured — the gate scores it as ${condition.actual}% until jscpd runs`
-          : "Not measured — no duplication engine runs yet"
-      }
+      note="Not measured — no duplication engine runs yet"
       muted
     />
   );

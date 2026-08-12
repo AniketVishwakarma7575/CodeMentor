@@ -64,14 +64,24 @@ function setRunState(repoId: string | null, run: RunDetail | null): void {
   for (const listener of runListeners) listener();
 }
 
+export function resetProjectStatus(): void {
+  runInflight = null;
+  setRunState(null, null);
+}
+
 export function useProjectStatus(): ProjectStatus {
   const [activeProjectId] = useActiveProject();
-  const { repos, loading } = useRepositories();
+  const { repos, loading, error } = useRepositories();
   const runSnapshot = React.useSyncExternalStore(
     subscribeRun,
     getRunSnapshot,
     getServerRunSnapshot
   );
+
+  React.useEffect(() => {
+    if (loading || error || !activeProjectId) return;
+    if (!repos.some((r) => r.id === activeProjectId)) selectProject(null);
+  }, [activeProjectId, error, loading, repos]);
 
   React.useEffect(() => {
     if (USE_FIXTURES) return;

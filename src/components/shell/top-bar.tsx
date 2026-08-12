@@ -15,6 +15,7 @@ import {
   LogOut,
   Search,
   Sun,
+  UserCog,
 } from "lucide-react";
 import { BRANCHES, REPO } from "@/data/repo";
 import { useRouter } from "next/navigation";
@@ -513,12 +514,17 @@ export function ThemeToggle() {
 /* -- account ---------------------------------------------------------------- */
 
 /**
- * The signed-in user, and the way out.
+ * The signed-in user, and what they can do about it.
  *
  * The fixture version listed "Account settings", "Team & billing" and "API
  * tokens" — three items that did nothing, next to a Sign out that also did
- * nothing. Only the real action is here now: a menu of dead links is worse
- * than a short menu, because the user finds out one click at a time.
+ * nothing. The rule that replaced it stands: only real actions appear here,
+ * because a menu of dead links is worse than a short menu — the user finds out
+ * one click at a time.
+ *
+ * "Account" is here now because the page behind it exists and does something:
+ * profile, password, and the list of devices signed in to this account. "Team
+ * & billing" and "API tokens" are still absent, for the original reason.
  */
 function AccountMenu() {
   const { user, signOut } = useAuth();
@@ -551,6 +557,16 @@ function AccountMenu() {
               </p>
             </div>
           ) : null}
+
+          <DropdownMenu.Item asChild>
+            <Link
+              href="/account"
+              className="flex h-7 cursor-pointer items-center gap-2 rounded-md px-2 text-sm text-fg-secondary outline-none data-[highlighted]:bg-hover data-[highlighted]:text-fg"
+            >
+              <UserCog size={13} aria-hidden />
+              Account
+            </Link>
+          </DropdownMenu.Item>
 
           <DropdownMenu.Item
             disabled={signingOut}

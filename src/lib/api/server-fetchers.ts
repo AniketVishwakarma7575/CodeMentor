@@ -7,7 +7,7 @@ import type { InsightsOverview } from "./insights";
 import type { Concept } from "@/lib/types";
 import type { RepositorySummary } from "./repositories";
 import type { RunDetail } from "./runs";
-import type { SessionUser } from "./auth";
+import type { ActiveSession, SessionUser } from "./auth";
 import type { FindingFilters } from "./findings";
 import { serverFetch } from "./server";
 
@@ -38,6 +38,19 @@ import { serverFetch } from "./server";
 
 export function currentUserServer(): Promise<SessionUser | null> {
   return serverFetch<SessionUser>("/auth/me");
+}
+
+/**
+ * Live sessions for the account screen.
+ *
+ * Fetched on the server so the list is already there on first paint — this is
+ * a security surface, and a spinner where "which devices can reach my account"
+ * belongs is the wrong first impression. Null when the API did not answer, and
+ * the screen says so rather than rendering an empty list, which would read as
+ * "no other devices".
+ */
+export function sessionsServer(): Promise<ActiveSession[] | null> {
+  return serverFetch<ActiveSession[]>("/auth/sessions");
 }
 
 /* -- repositories ----------------------------------------------------------- */

@@ -37,12 +37,20 @@ interface SessionResponse {
   expiresIn: number;
 }
 
+/**
+ * Create an account.
+ *
+ * ⚠️ Returns the created user and NO session — registering does not sign you
+ *    in. The flow is register → sign in, and the backend sets no cookies here,
+ *    so a caller that treats this like `login` will find itself signed out on
+ *    the very next request.
+ */
 export function register(input: {
   email: string;
   password: string;
   displayName?: string;
-}): Promise<SessionResponse> {
-  return apiFetch<SessionResponse>("/auth/register", {
+}): Promise<SessionUser> {
+  return apiFetch<SessionUser>("/auth/register", {
     method: "POST",
     body: JSON.stringify(input),
   });
@@ -73,6 +81,92 @@ export async function logout(): Promise<void> {
   } catch {
     /* Already gone, or the API is down. Either way the client signs out. */
   }
+}
+
+/* -- account --------------------------------------------------------------- */
+
+/**
+ * Change the password while signed in.
+ *
+ * Returns a fresh session because the server revokes every existing one,
+ * including this browser's — the new cookies arrive on the response, so the
+ * caller does not need to sign in again.
+ */
+export function changePassword(input: {
+  currentPassword: string;
+  newPassword: string;
+}): Promise<SessionResponse> {
+  return apiFetch<SessionResponse>("/auth/password/change", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/**
+ * Ask for a reset link.
+ *
+ * ⚠️ Resolves for ANY address, including ones with no account. That is the
+ *    server's contract, not an oversight, and the UI must not undo it by
+ *    reporting "no account with that email" — the endpoint is unauthenticated,
+ *    so a response that differed would be a free membership oracle.
+ */
+export function forgotPassword(email: string): Promise<void> {
+  return apiFetch<void>("/auth/password/forgot", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+/** Redeem a reset link. No session comes back — the user signs in after. */
+export function resetPassword(input: { token: string; newPassword: string }): Promise<void> {
+  return apiFetch<void>("/auth/password/reset", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/** Change the display name, the email, or both. Email changes need the password. */
+export function updateProfile(input: {
+  displayName?: string | null;
+  email?: string;
+  password?: string;
+}): Promise<SessionUser> {
+  return apiFetch<SessionUser>("/auth/me", {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+/** Close the account. Irreversible from the UI, so the server demands a password. */
+export function deleteAccount(password: string): Promise<void> {
+  return apiFetch<void>("/auth/me", {
+    method: "DELETE",
+    body: JSON.stringify({ password }),
+  });
+}
+
+/* -- sessions ---------------------------------------------------------------- */
+
+export interface ActiveSession {
+  id: string;
+  /** Raw user-agent. Diagnostic — never trusted, and summarised for display. */
+  userAgent: string | null;
+  createdAt: string;
+  expiresAt: string;
+  /** The session making the request. The UI must not offer to end it. */
+  current: boolean;
+}
+
+export function listSessions(): Promise<ActiveSession[]> {
+  return apiFetch<ActiveSession[]>("/auth/sessions");
+}
+
+export function revokeSession(id: string): Promise<void> {
+  return apiFetch<void>(`/auth/sessions/${id}`, { method: "DELETE" });
+}
+
+export function revokeOtherSessions(): Promise<{ revoked: number }> {
+  return apiFetch<{ revoked: number }>("/auth/sessions", { method: "DELETE" });
 }
 
 /* -- silent refresh ---------------------------------------------------------- */

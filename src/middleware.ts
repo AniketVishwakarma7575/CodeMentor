@@ -22,8 +22,26 @@ import { NextResponse, type NextRequest } from "next/server";
 const ACCESS_COOKIE = "cm_access";
 const REFRESH_COOKIE = "cm_refresh";
 
-/** Reachable signed out. Everything else requires a session. */
-const PUBLIC_PATHS = ["/login", "/register"];
+/**
+ * Reachable signed out. Everything else requires a session.
+ *
+ * ⚠️ The two password routes MUST be here. Someone who cannot sign in is
+ *    exactly who needs them, so gating them behind a session would redirect the
+ *    user to the sign-in page they came from because they could not sign in.
+ */
+const PUBLIC_PATHS = ["/login", "/register", "/forgot-password", "/reset-password"];
+
+/**
+ * Public paths a SIGNED-IN user is still allowed to open.
+ *
+ * The redirect below normally bounces an authenticated visitor away from the
+ * auth screens, which is right for /login. It is wrong for /reset-password:
+ * someone with a live session in one tab may be following a reset link they
+ * requested precisely because they think that session belongs to someone else.
+ * Bouncing them into the app would make the link unusable for the one person
+ * who most needs it.
+ */
+const PUBLIC_EVEN_WHEN_SIGNED_IN = ["/reset-password"];
 
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
@@ -39,9 +57,14 @@ export function middleware(request: NextRequest) {
   const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 
   if (isPublic) {
+    const alwaysAllowed = PUBLIC_EVEN_WHEN_SIGNED_IN.some(
+      (p) => pathname === p || pathname.startsWith(`${p}/`)
+    );
     // Already signed in and heading for the sign-in page — send them to the app
     // rather than showing a form that would immediately redirect anyway.
-    if (hasSession) return NextResponse.redirect(new URL("/repositories", request.url));
+    if (hasSession && !alwaysAllowed) {
+      return NextResponse.redirect(new URL("/repositories", request.url));
+    }
     return NextResponse.next();
   }
 

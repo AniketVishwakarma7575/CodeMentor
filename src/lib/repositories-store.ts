@@ -137,3 +137,10 @@ export function upsertRepository(repo: RepositorySummary): void {
 export function removeRepository(id: string): void {
   set({ repos: state.repos.filter((r) => r.id !== id) });
 }
+
+export function resetRepositories(): void {
+  state = { repos: [], loading: true, error: null };
+  inflight = null;
+  loaded = false;
+  emit();
+}

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ApiError } from "@/lib/api/client";
 import { login } from "@/lib/api/auth";
+import { resetClientWorkspace } from "@/lib/reset-client-workspace";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { Field, FormError, PasswordField, SubmitButton } from "@/components/auth/auth-form";
 
@@ -13,9 +14,21 @@ const REASONS: Record<string, string> = {
   signedout: "You have been signed out.",
   replayed: "That session was used from somewhere else, so everyone was signed out.",
   required: "Sign in to continue.",
+  /* Registering does not sign you in — this is the second half of that flow,
+     and saying so is what stops it reading as "my new account did not work". */
+  registered: "Account created. Sign in to get started.",
 };
 
-export function LoginForm({ next, reason }: { next: string | null; reason: string | null }) {
+export function LoginForm({
+  next,
+  reason,
+  email,
+}: {
+  next: string | null;
+  reason: string | null;
+  /** Prefilled after registering, so nobody retypes what they just typed. */
+  email: string | null;
+}) {
   const router = useRouter();
   const [pending, setPending] = React.useState(false);
   const [done, setDone] = React.useState(false);
@@ -35,6 +48,7 @@ export function LoginForm({ next, reason }: { next: string | null; reason: strin
 
     try {
       await login({ email, password });
+      resetClientWorkspace();
       // Held true through the navigation so the button does not flick back to
       // its idle state while the next route is still resolving.
       setDone(true);
@@ -82,28 +96,46 @@ export function LoginForm({ next, reason }: { next: string | null; reason: strin
           type="email"
           inputMode="email"
           autoComplete="email"
-          // The first field on a sign-in page should already be focused —
-          // the user came here to type into it.
-          autoFocus
+          defaultValue={email ?? undefined}
+          // The first EMPTY field gets focus. Arriving from registration the
+          // email is already filled, so focusing it would make the user tab
+          // past a value they do not need to touch.
+          autoFocus={!email}
           required
           placeholder="you@company.com"
           disabled={pending || done}
           aria-describedby={error ? "login-error" : undefined}
         />
 
-        <PasswordField
-          id="password"
-          name="password"
-          label="Password"
-          // `current-password`, not `new-password`. This is what tells a
-          // password manager to OFFER a saved credential rather than to
-          // generate one.
-          autoComplete="current-password"
-          required
-          placeholder="••••••••••"
-          disabled={pending || done}
-          aria-describedby={error ? "login-error" : undefined}
-        />
+        <div>
+          <PasswordField
+            id="password"
+            name="password"
+            label="Password"
+            // Arriving from registration the email is prefilled, so the
+            // password is the first thing left to type.
+            autoFocus={Boolean(email)}
+            // `current-password`, not `new-password`. This is what tells a
+            // password manager to OFFER a saved credential rather than to
+            // generate one.
+            autoComplete="current-password"
+            required
+            placeholder="••••••••••"
+            disabled={pending || done}
+            aria-describedby={error ? "login-error" : undefined}
+          />
+          {/* Under the field, not in the footer: this is what someone reaches
+              for the moment the password fails, and it should be where their
+              eyes already are. */}
+          <div className="mt-1.5 flex justify-end">
+            <Link
+              href="/forgot-password"
+              className="text-2xs text-fg-muted underline-offset-2 hover:text-fg-secondary hover:underline"
+            >
+              Forgot your password?
+            </Link>
+          </div>
+        </div>
 
         <SubmitButton pending={pending} done={done}>
           {done ? "Signed in" : pending ? "Signing in…" : "Sign in"}

@@ -54,6 +54,11 @@ export async function listFindings(
  * ⚠️ This does NOT change the run's score, by design — the backend treats a
  *    score as a fact about a moment in time. The UI must not imply otherwise
  *    by optimistically recomputing one.
+ *
+ * ⚠️ It also is NOT how a fix gets applied. Sending `status: "applied"` here
+ *    records a claim and touches no file — that is exactly the bug this pair of
+ *    functions was split to prevent. Use `applyFinding` below, which writes the
+ *    patch first and sets the status only once the write succeeded.
  */
 export function setFindingStatus(
   id: string,
@@ -68,6 +73,23 @@ export function setFindingStatus(
       ...(options.snoozeUntil ? { snoozeUntil: options.snoozeUntil.toISOString() } : {}),
     }),
   });
+}
+
+/**
+ * Apply a finding's patch to the file on disk.
+ *
+ * The server anchors the patch against the file's current bytes and refuses if
+ * anything moved, so the failure modes are informative rather than mysterious:
+ *
+ *   VERIFICATION_FAILED  the patch was already tried on a copy and rejected
+ *   PATCH_DRIFTED        the file changed since the analysis — re-run it
+ *   NO_FIX_AVAILABLE     the rule had no honest patch to offer
+ *
+ * Every one arrives as an `ApiError` whose `message` is written for the reader,
+ * so surface it verbatim rather than substituting "something went wrong".
+ */
+export function applyFinding(id: string): Promise<Finding> {
+  return apiFetch<Finding>(`/findings/${id}/apply`, { method: "POST" });
 }
 
 /* -- server ----------------------------------------------------------------- */

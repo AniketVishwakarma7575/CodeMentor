@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { isAuthError, logout as apiLogout, me, type SessionUser } from "@/lib/api/auth";
+import { resetClientWorkspace } from "@/lib/reset-client-workspace";
 
 /* ============================================================================
    Who is signed in.
@@ -68,6 +69,7 @@ export function AuthProvider({
 
   const signOut = React.useCallback(async () => {
     await apiLogout();
+    resetClientWorkspace();
     setUser(null);
     // `replace`, not `push`: the page behind is one the user can no longer
     // see, and Back should not appear to return to it.
