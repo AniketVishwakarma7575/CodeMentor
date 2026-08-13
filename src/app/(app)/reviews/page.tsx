@@ -32,6 +32,8 @@ export default async function ReviewPage({
 }) {
   const { finding, file, repo } = await searchParams;
 
+  if (!repo && !USE_FIXTURES) return <NoProjectSelected />;
+
   if (repo && !USE_FIXTURES) {
     const data = await loadReviewData(repo, file);
     if (!data) return <NotAnalysedYet repoId={repo} />;
@@ -100,6 +102,45 @@ async function tokenizeFixes(findings: Finding[]) {
     out[f.id] = await tokenizeCode(body.map((l) => l.text).join("\n"), f.fix.language);
   }
   return out;
+}
+
+/**
+ * `/reviews` with no `?repo=`, on an install that is not in fixture mode.
+ *
+ * ⚠️ THIS USED TO FALL THROUGH TO THE SAMPLE REVIEW, and that was a trap
+ *    rather than a nicety.
+ *
+ *    The screen filled with a fake project — orders.js, 4,218 lines, 8
+ *    findings, score 34 — under the real header showing the user's actual repo
+ *    name and branch. Nothing on it said "sample". Every control worked well
+ *    enough to look real: Apply reported "Fix applied" against a file that
+ *    exists on no disk, and the code pane never changed because there was
+ *    nothing to change.
+ *
+ *    The root redirect lands here (`app/page.tsx`), so this is the first screen
+ *    of the product for anyone who has not picked a project. It has to say what
+ *    it is. The designed sample is still one env var away — that is what
+ *    NEXT_PUBLIC_USE_FIXTURES is for — but it is no longer what a real install
+ *    shows by accident.
+ */
+function NoProjectSelected() {
+  return (
+    <div className="flex h-full items-center justify-center px-6">
+      <div className="max-w-[420px] text-center">
+        <FileSearch size={22} className="mx-auto text-fg-faint" aria-hidden />
+        <h1 className="mt-3 text-sm font-medium text-fg">No project selected</h1>
+        <p className="mt-1 text-2xs text-fg-muted">
+          A review is always scoped to one project. Choose one to see its findings — or
+          connect a folder if you have not added one yet.
+        </p>
+        <div className="mt-4 flex items-center justify-center gap-2">
+          <Button size="sm" variant="primary" asChild>
+            <Link href="/repositories">Choose a project</Link>
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /**

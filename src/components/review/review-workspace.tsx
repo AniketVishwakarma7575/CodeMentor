@@ -8,7 +8,6 @@ import { AlertTriangle, FileCode2, Filter, RotateCcw, Undo2, X } from "lucide-re
 import type { TokenLine } from "@/lib/highlight";
 import type { FileNode, Finding, RunStage, Severity } from "@/lib/types";
 import { ApiError } from "@/lib/api/client";
-import { USE_FIXTURES } from "@/lib/api/config";
 import { applyFinding, setFindingStatus } from "@/lib/api/findings";
 import { FINDINGS } from "@/data/findings";
 import { FILE_TREE, REPO, RUN_DURATION_MS, RUN_STAGES, SCORE } from "@/data/repo";
@@ -34,6 +33,27 @@ const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "info"];
  * still familiar.
  */
 const SNOOZE_DAYS = 14;
+
+/**
+ * Is this finding still work the reader has to do?
+ *
+ * Only `open` is. The other three are each a different way of being finished
+ * with it: `applied` wrote the patch, `dismissed` rejected the finding,
+ * `snoozed` deferred it past this sitting.
+ *
+ * ⚠️ `applied` used to count. The severity chips said "Critical 5" on a file
+ *    where all five had been fixed and the code pane was showing the repaired
+ *    lines — the one number on the screen that is supposed to answer "how much
+ *    is left" answering it wrong, and never going down no matter how much work
+ *    the reader did.
+ *
+ * One predicate for the chips, the header glyphs, the "n more in other files"
+ * count and the list filter, so those four cannot drift into disagreeing about
+ * what a remaining problem is.
+ */
+function isOutstanding(f: Finding): boolean {
+  return f.status === "open";
+}
 
 /**
  * Everything that differs between a real run and the fixture screen.
@@ -107,6 +127,25 @@ export function ReviewWorkspace({
   const scoreDelta = subject.scoreDelta ?? SCORE.delta;
   const scoreBaseline = subject.scoreBaseline ?? SCORE.baseline;
 
+  /**
+   * Is this screen backed by a real repository, or is it the designed sample?
+   *
+   * ⚠️ NOT `USE_FIXTURES`, and the difference is a bug that reached the screen.
+   *
+   *    That flag says what the user CONFIGURED; this says what the page
+   *    actually rendered, and they disagree on a URL anyone can land on.
+   *    `/reviews` with no `?repo=` falls back to the fixture review even when
+   *    fixtures are off — see the `repo && !USE_FIXTURES` branch in
+   *    reviews/page.tsx. Every mutation below used to test the flag, so on that
+   *    URL the screen showed sample findings and posted their FIXTURE ids to
+   *    the real API: `POST /findings/f-1/apply`, answered with "No finding with
+   *    that id".
+   *
+   *    `repoId` is set only on the branch that loaded real data, so it is the
+   *    honest signal. `setFile` below already depends on exactly this.
+   */
+  const isLive = Boolean(subject.repoId);
+
   const [findings, setFindings] = React.useState<Finding[]>(subject.findings ?? FINDINGS);
   const [file, setFileState] = React.useState(initialFile);
   const [loadingFile, startFileLoad] = React.useTransition();
@@ -140,6 +179,20 @@ export function ReviewWorkspace({
   /* The server is the source of truth for which file is open: the back button
      and a pasted ?file= both arrive as a new prop, not as a click. */
   React.useEffect(() => setFileState(initialFile), [initialFile]);
+
+  /* Same reasoning, for the findings themselves.
+
+     `useState` reads its initial value once, so without this the props that
+     come back from `router.refresh()` after a write are dropped on the floor —
+     the pane would show the patched file beside findings still numbered against
+     the file as it was before the patch.
+
+     Safe against the optimistic updates above because every one of them is
+     already persisted by the time a refresh can land: a refresh is only ever
+     triggered from the `.then` of a write the server has confirmed. */
+  React.useEffect(() => {
+    if (subject.findings) setFindings(subject.findings);
+  }, [subject.findings]);
   const [sevFilter, setSevFilter] = React.useState<Set<Severity>>(new Set());
   const [statusFilter, setStatusFilter] = React.useState<"open" | "all">("open");
   const [categoryFilter, setCategoryFilter] = React.useState<string | null>(null);
@@ -183,19 +236,21 @@ export function ReviewWorkspace({
         // point at a line the user cannot see. In fixture mode every finding is
         // already in the open file, so this changes nothing there.
         .filter((f) => f.file === file)
-        .filter((f) => (statusFilter === "open" ? f.status === "open" || f.status === "applied" : true))
+        /* `|| f.id === selectedId` PINS the row you are looking at.
+           An applied finding is no longer outstanding, so it leaves this list —
+           but not while it is the one on screen, or the card would vanish in
+           the same frame that the fix landed and take its "Fix applied"
+           confirmation with it. It drops out as soon as you move on. */
+        .filter((f) => (statusFilter === "open" ? isOutstanding(f) || f.id === selectedId : true))
         .filter((f) => (sevFilter.size === 0 ? true : sevFilter.has(f.severity)))
         .filter((f) => (categoryFilter ? f.category === categoryFilter : true))
         .sort((a, b) => severityMeta[a.severity].rank - severityMeta[b.severity].rank || a.line - b.line),
-    [findings, file, sevFilter, statusFilter, categoryFilter]
+    [findings, file, sevFilter, statusFilter, categoryFilter, selectedId]
   );
 
-  /** Open findings in other files — counted here, never summed off the stages. */
+  /** Outstanding findings in other files — counted here, never summed off the stages. */
   const elsewhere = React.useMemo(
-    () =>
-      findings.filter(
-        (f) => f.file !== file && f.status !== "dismissed" && f.status !== "snoozed"
-      ).length,
+    () => findings.filter((f) => f.file !== file && isOutstanding(f)).length,
     [findings, file]
   );
 
@@ -210,7 +265,7 @@ export function ReviewWorkspace({
   const counts = React.useMemo(() => {
     const c: Record<string, number> = {};
     for (const f of findings) {
-      if (f.status === "dismissed" || f.status === "snoozed") continue;
+      if (!isOutstanding(f)) continue;
       c[f.severity] = (c[f.severity] ?? 0) + 1;
     }
     return c;
@@ -277,14 +332,23 @@ export function ReviewWorkspace({
       mutate(id, { status: "applied" });
       window.setTimeout(() => setRevealDiffFor(null), 900);
 
-      if (USE_FIXTURES) return;
+      if (!isLive) return;
       applyFinding(id)
-        // Take the server's finding wholesale: it is the record of what was
-        // actually written, and it may differ from the optimistic guess.
-        .then((updated) => setFindings((prev) => prev.map((f) => (f.id === id ? updated : f))))
+        .then((updated) => {
+          // Take the server's finding wholesale: it is the record of what was
+          // actually written, and it may differ from the optimistic guess.
+          setFindings((prev) => prev.map((f) => (f.id === id ? updated : f)));
+          // ⚠️ The code pane is SERVER-rendered — Shiki never enters the browser
+          //    bundle — so the bytes on screen are the ones fetched before this
+          //    write. Without this refresh the patch is on disk and invisible,
+          //    which the reader cannot tell apart from the button having done
+          //    nothing. It also pulls back the line numbers the server just
+          //    shifted for every other finding in this file.
+          router.refresh();
+        })
         .catch((err: unknown) => revert(before, err));
     },
-    [findings, mutate, revert]
+    [findings, isLive, mutate, revert, router]
   );
 
   /** Move selection *before* removing the row, so focus never lands on nothing. */
@@ -299,7 +363,7 @@ export function ReviewWorkspace({
       setError(null);
       mutate(id, { status }, label);
 
-      if (USE_FIXTURES) return;
+      if (!isLive) return;
       setFindingStatus(id, status, {
         // A snooze with no end is a dismissal in disguise — the backend rejects
         // one, so the duration is chosen here rather than left undefined.
@@ -308,7 +372,7 @@ export function ReviewWorkspace({
           : {}),
       }).catch((err: unknown) => revert(before, err));
     },
-    [findings, mutate, revert, setSelected, visible]
+    [findings, isLive, mutate, revert, setSelected, visible]
   );
 
   /**
@@ -324,7 +388,7 @@ export function ReviewWorkspace({
     setFindings((prev) => prev.map((f) => (f.id === restored.id ? restored : f)));
     setUndo(null);
 
-    if (USE_FIXTURES) return;
+    if (!isLive) return;
     setFindingStatus(restored.id, restored.status).catch((err: unknown) => {
       setError(
         err instanceof ApiError
@@ -332,7 +396,7 @@ export function ReviewWorkspace({
           : "Could not reach the API, so this finding is still dismissed on the server."
       );
     });
-  }, [undo]);
+  }, [isLive, undo]);
 
   const step = React.useCallback(
     (dir: 1 | -1) => {
@@ -509,8 +573,16 @@ export function ReviewWorkspace({
                 {SEVERITIES.map((s) => {
                   const n = counts[s] ?? 0;
                   const on = sevFilter.has(s);
+                  // ⚠️ `disabled={n === 0 && !on}` — an ACTIVE chip stays
+                  //    clickable at zero, or the reader gets locked into it.
+                  //    Applying the last critical takes that count to 0, and a
+                  //    disabled chip that is still filtering cannot be switched
+                  //    off: the list empties and the only way out is the Clear
+                  //    button. Counts only started reaching zero mid-session
+                  //    when `applied` stopped counting, which is what made this
+                  //    reachable.
                   return (
-                    <button key={s} onClick={() => toggleSev(s)} disabled={n === 0} aria-pressed={on}>
+                    <button key={s} onClick={() => toggleSev(s)} disabled={n === 0 && !on} aria-pressed={on}>
                       {/* pillPop acknowledges the state flip. It is the one
                           micro-interaction here: without it a chip toggling
                           between two low-contrast greys is easy to miss. */}

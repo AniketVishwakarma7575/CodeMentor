@@ -23,6 +23,27 @@ import { SeverityGlyph } from "@/components/severity";
 
 const LINE_HEIGHT = 20; // px — 13px mono at 1.5
 
+/**
+ * Does this finding still describe what is on the line?
+ *
+ * ⚠️ `applied` is the one that is easy to miss, and it was: this used to skip
+ *    only `dismissed`, so a fix that had just been written to disk left its red
+ *    marker and its tinted gutter band sitting on top of the repaired line. The
+ *    pane rendered `apiKey: process.env.API_KEY` with "Hard-coded credential"
+ *    stamped across it — the badge contradicting the bytes directly under it.
+ *
+ *    `snoozed` deliberately still marks: the defect is untouched, the reader
+ *    only chose to deal with it later.
+ *
+ * The finding CARD keeps showing an applied finding — see `visible` in
+ * review-workspace, which admits `applied` on purpose so the reader can see
+ * what they just did. That is a claim about the finding. This is a claim about
+ * the source, and once the source changes they stop agreeing.
+ */
+function marksSource(f: Finding): boolean {
+  return f.status !== "dismissed" && f.status !== "applied";
+}
+
 export function CodeViewer({
   tokens,
   findings,
@@ -44,7 +65,7 @@ export function CodeViewer({
   const byLine = React.useMemo(() => {
     const map = new Map<number, Finding[]>();
     for (const f of findings) {
-      if (f.status === "dismissed") continue;
+      if (!marksSource(f)) continue;
       const arr = map.get(f.line) ?? [];
       arr.push(f);
       map.set(f.line, arr);
@@ -56,7 +77,7 @@ export function CodeViewer({
   const coverage = React.useMemo(() => {
     const map = new Map<number, Finding>();
     for (const f of findings) {
-      if (f.status === "dismissed") continue;
+      if (!marksSource(f)) continue;
       for (let l = f.line; l <= (f.endLine ?? f.line); l++) {
         const existing = map.get(l);
         // Worst severity wins the gutter when ranges overlap.
