@@ -98,6 +98,65 @@ export function browseLocal(path?: string): Promise<BrowseResult> {
   return apiFetch<BrowseResult>(`/repositories/local/browse${qs}`);
 }
 
+/**
+ * Create an empty file or a folder inside a connected local folder.
+ *
+ * `path` is repo-relative, e.g. `src/pages/Billing.jsx`. The parent folder must
+ * already exist — the server refuses to create a chain of missing directories
+ * rather than turning a typo into a junk tree.
+ *
+ * Refusals arrive as an `ApiError` whose `message` is written for the reader
+ * (`already exists`, `.git is not part of the project`, `the folder src/x does
+ * not exist`), so surface it verbatim rather than substituting a generic one.
+ */
+export function createRepoEntry(
+  repoId: string,
+  path: string,
+  kind: "file" | "directory"
+): Promise<{ path: string; kind: "file" | "directory" }> {
+  return apiFetch<{ path: string; kind: "file" | "directory" }>(
+    `/repositories/${repoId}/entries`,
+    { method: "POST", body: JSON.stringify({ path, kind }) }
+  );
+}
+
+/**
+ * Rename or move a file or folder.
+ *
+ * Findings on the affected paths move with it server-side, so the tree and the
+ * findings list stay in step without a second call.
+ */
+export function renameRepoEntry(
+  repoId: string,
+  from: string,
+  to: string
+): Promise<{ path: string }> {
+  return apiFetch<{ path: string }>(`/repositories/${repoId}/entries`, {
+    method: "PATCH",
+    body: JSON.stringify({ from, to }),
+  });
+}
+
+/**
+ * Delete a file or folder.
+ *
+ * ⚠️ Destructive and not undoable from this product. Deleting a folder takes
+ *    everything inside it. Never call this without an explicit confirmation
+ *    that names the path — see `ConfirmDelete`.
+ *
+ * `findingsRemoved` comes back because the findings that pointed at the deleted
+ * path go with it: the caller shows what its own click cost.
+ */
+export function deleteRepoEntry(
+  repoId: string,
+  path: string
+): Promise<{ path: string; findingsRemoved: number }> {
+  return apiFetch<{ path: string; findingsRemoved: number }>(
+    `/repositories/${repoId}/entries?path=${encodeURIComponent(path)}`,
+    { method: "DELETE" }
+  );
+}
+
 export function connectLocalFolder(path: string, displayName?: string): Promise<RepositorySummary> {
   return apiFetch<RepositorySummary>("/repositories/local", {
     method: "POST",

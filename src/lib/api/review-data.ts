@@ -26,6 +26,8 @@ export interface RepoFile {
 /** `GET /repositories/:id/tree` — every file in the folder, repo-relative. */
 interface RepoTree {
   files: string[];
+  /** Folders no file path implies — see `buildFileTree`'s `emptyDirs`. */
+  dirs?: string[];
   /** The server walk hit its file or time ceiling; the tree is a subset. */
   truncated: boolean;
 }
@@ -86,7 +88,7 @@ export async function loadReviewData(
   // now lists every file in the project, so clicking a PNG or a 4MB lockfile is
   // an ordinary thing to do; returning null here would replace the whole
   // workspace with "nothing to review" and look like the analysis was lost.
-  const fileTree = buildFileTree(paths, findings);
+  const fileTree = buildFileTree(paths, findings, tree?.dirs ?? []);
 
   return {
     repoId,
@@ -130,7 +132,19 @@ function worstFile(findings: Finding[]): string | null {
  * excluded by the walk's ignore list). Those are added rather than dropped: an
  * orphaned finding the tree refuses to show is a finding the user never fixes.
  */
-export function buildFileTree(paths: string[], findings: Finding[]): FileNode[] {
+export function buildFileTree(
+  paths: string[],
+  findings: Finding[],
+  /**
+   * Folders with no file anywhere beneath them.
+   *
+   * The tree is reconstructed from file paths, so a directory only exists here
+   * because some file mentioned it. An empty one is therefore invisible — which
+   * includes the folder the user just created, making "New folder" look like it
+   * did nothing. The server reports these separately for exactly this reason.
+   */
+  emptyDirs: string[] = []
+): FileNode[] {
   const stats = new Map<string, { count: number; worst: Severity }>();
   for (const f of findings) {
     const seen = stats.get(f.file);
@@ -150,23 +164,28 @@ export function buildFileTree(paths: string[], findings: Finding[]): FileNode[] 
   // between a tree that builds in milliseconds and one that blocks the render.
   const dirs = new Map<string, FileNode>();
 
-  for (const path of all) {
-    const segments = path.split("/");
+  /** Create every directory along `segments`, and return the deepest one's children. */
+  const ensureDirs = (segments: string[]): FileNode[] => {
     let level = root;
     let walked = "";
-
-    // Every segment but the last is a directory.
-    for (let i = 0; i < segments.length - 1; i++) {
-      walked = walked ? `${walked}/${segments[i]}` : segments[i];
+    for (const segment of segments) {
+      walked = walked ? `${walked}/${segment}` : segment;
       let dir = dirs.get(walked);
       if (!dir) {
-        dir = { path: walked, name: segments[i], type: "dir", children: [] };
+        dir = { path: walked, name: segment, type: "dir", children: [] };
         dirs.set(walked, dir);
         level.push(dir);
       }
       // A directory created above always has children; the assertion is safe.
       level = dir.children!;
     }
+    return level;
+  };
+
+  for (const path of all) {
+    const segments = path.split("/");
+    // Every segment but the last is a directory.
+    const level = ensureDirs(segments.slice(0, -1));
 
     const stat = stats.get(path);
     level.push({
@@ -177,6 +196,9 @@ export function buildFileTree(paths: string[], findings: Finding[]): FileNode[] 
       ...(stat ? { worst: stat.worst } : {}),
     });
   }
+
+  // Here the last segment IS a directory, so the whole path goes through.
+  for (const dir of emptyDirs) ensureDirs(dir.split("/").filter(Boolean));
 
   sortNodes(root);
   return root;

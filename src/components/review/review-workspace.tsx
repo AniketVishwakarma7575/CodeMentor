@@ -17,7 +17,7 @@ import { isTypingTarget } from "@/lib/shortcuts";
 import { fade, pillPop } from "@/lib/motion";
 import { Button, Chip, Kbd, Tooltip } from "@/components/ui/primitives";
 import { SeverityGlyph } from "@/components/severity";
-import { FileTree } from "./file-tree";
+import { FileExplorer } from "./file-explorer";
 import { CodeViewer } from "./code-viewer";
 import { FindingCard } from "./finding-card";
 import { FileNotShown, NoFindings, NoSelection } from "./states";
@@ -626,28 +626,60 @@ export function ReviewWorkspace({
               </div>
             </div>
 
-            <div className="flex h-7 shrink-0 items-center justify-between border-b border-subtle px-2.5">
-              <span className="text-2xs font-medium uppercase tracking-[0.04em] text-fg-faint">
-                Files
-              </span>
-              {/* "+" when the server walk hit its ceiling. The count is then a
-                  floor, and a flat number would claim the tree is complete. */}
-              <Tooltip
-                content={
-                  filesTruncated
-                    ? "The folder walk stopped at its file limit — more files exist than are listed."
-                    : `${fileCount.toLocaleString()} files in this project`
-                }
-                side="left"
-              >
-                <span className="tnum text-2xs text-fg-faint">
-                  {fileCount.toLocaleString()}
-                  {filesTruncated ? "+" : ""}
-                </span>
-              </Tooltip>
-            </div>
+            <FileExplorer
+              nodes={fileTree}
+              selectedPath={file}
+              onSelect={setFile}
+              /* Null in fixture mode, which hides the create controls entirely:
+                 there is no folder on disk to create anything in, and a button
+                 that reports success against a bundled constant is the same lie
+                 the apply button used to tell. */
+              repoId={subject.repoId ?? null}
+              fileCount={fileCount}
+              filesTruncated={filesTruncated}
+              onCreated={(path, kind) => {
+                // A new file: select it. `setFile` pushes the route, which
+                // re-runs the server component and rebuilds the tree, so the
+                // row exists by the time the selection lands on it.
+                if (kind === "file") setFile(path);
+                // A new folder holds nothing to open, so there is nothing to
+                // select — just refetch so it appears.
+                else router.refresh();
+              }}
+              onRenamed={(from, to) => {
+                /* Follow the open file to its new name. Without this the pane
+                   keeps requesting a path that no longer exists and the next
+                   refresh replaces the code with "cannot display".
 
-            <FileTree nodes={fileTree} selectedPath={file} onSelect={setFile} className="flex-1" />
+                   `startsWith` covers the folder case: renaming `src` moves
+                   `src/pages/Settings.jsx` too, and the open file is now under
+                   a prefix it has never heard of. */
+                if (file === from) setFile(to);
+                else if (file.startsWith(`${from}/`)) setFile(to + file.slice(from.length));
+                else router.refresh();
+              }}
+              onDeleted={(path, findingsRemoved) => {
+                /* The findings went with the file on the server; drop them here
+                   too rather than waiting for the refetch, or the severity
+                   chips keep counting a file that no longer exists for as long
+                   as the round trip takes. */
+                if (findingsRemoved > 0) {
+                  setFindings((prev) =>
+                    prev.filter((f) => f.file !== path && !f.file.startsWith(`${path}/`))
+                  );
+                }
+                // Deleting the file you were reading leaves nothing to show, so
+                // the route has to move before the tree refetches without it.
+                if (file === path || file.startsWith(`${path}/`)) {
+                  const next = fileTree.find((n) => n.type === "file" && n.path !== path);
+                  if (next) setFile(next.path);
+                  else router.refresh();
+                } else {
+                  router.refresh();
+                }
+              }}
+              className="flex-1"
+            />
           </div>
         </Panel>
 
