@@ -63,6 +63,58 @@ export function login(input: { email: string; password: string }): Promise<Sessi
   });
 }
 
+/* -- passwordless sign in ---------------------------------------------------
+   Two calls. The first mails a six-digit code and returns the handle that
+   identifies the attempt; the second trades handle + code for a session.
+
+   ⚠️ Both paths start with `/auth/login`, so `NO_RETRY` in client.ts already
+      covers them: a 401 here means "wrong code", and refresh-and-retry would
+      turn one clear failure into two requests and a confusing message.      */
+
+export interface OtpChallenge {
+  /** Opaque. Echo it back with the code — it is not a credential on its own. */
+  challengeId: string;
+  expiresInMinutes: number;
+}
+
+/**
+ * Ask for a sign-in code.
+ *
+ * ⚠️ RESOLVES FOR ANY ADDRESS, including ones with no account — same contract
+ *    as `forgotPassword`, and for the same reason. The endpoint is
+ *    unauthenticated, so a response that differed would let anyone test which
+ *    addresses have accounts. The UI must not undo that by reporting "no
+ *    account with that email": it gets a real `challengeId` either way, and the
+ *    honest thing to show is "if that address has an account, the code is on
+ *    its way".
+ */
+export function requestLoginOtp(email: string): Promise<OtpChallenge> {
+  return apiFetch<OtpChallenge>("/auth/login/otp", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+/**
+ * Redeem a code for a session.
+ *
+ * Returns the same shape as `login` and sets the same httpOnly cookies, so
+ * everything downstream of sign-in is unchanged.
+ *
+ * The server strips non-digits before checking, so passing "482 915" straight
+ * from a paste is fine — no need to sanitise here and risk the two rules
+ * drifting apart.
+ */
+export function verifyLoginOtp(input: {
+  challengeId: string;
+  code: string;
+}): Promise<SessionResponse> {
+  return apiFetch<SessionResponse>("/auth/login/verify-otp", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export function me(): Promise<SessionUser> {
   return apiFetch<SessionUser>("/auth/me");
 }
