@@ -19,7 +19,12 @@ import {
 import { useTheme } from "next-themes";
 import { CONCEPTS, BRANCHES, FILE_TREE } from "@/data/repo";
 import { FINDINGS } from "@/data/findings";
-import type { FileNode } from "@/lib/types";
+import type { Concept, FileNode, Finding } from "@/lib/types";
+import { USE_FIXTURES } from "@/lib/api/config";
+import { listFindings } from "@/lib/api/findings";
+import { listRepositories, type RepositorySummary } from "@/lib/api/repositories";
+import { apiFetch } from "@/lib/api/client";
+import { useActiveProject } from "@/lib/active-project";
 import { cn, fileName, severityMeta, truncatePath } from "@/lib/utils";
 import { overlayVariants, paletteVariants } from "@/lib/motion";
 import { Kbd } from "@/components/ui/primitives";
@@ -50,6 +55,60 @@ function flattenFiles(nodes: FileNode[], out: FileNode[] = []): FileNode[] {
   return out;
 }
 
+/**
+ * The palette's searchable corpus, loaded the first time it opens.
+ *
+ * ── WHY LAZILY, AND ONLY ONCE ──
+ *
+ * The palette is mounted on every screen. Fetching findings and concepts on
+ * mount would put two requests on every page load to populate a surface most
+ * navigations never open. Fetching on every open would re-request on every
+ * ⌘K. So: first open, then kept.
+ *
+ * Everything here is scoped to the ACTIVE PROJECT. The fixture version searched
+ * a sample repository's findings from every screen, so ⌘K on a real project
+ * offered jump targets that did not exist in it.
+ */
+function usePaletteData(open: boolean) {
+  const [activeProjectId] = useActiveProject();
+  const [findings, setFindings] = React.useState<Finding[]>([]);
+  const [concepts, setConcepts] = React.useState<Concept[]>([]);
+  const [repos, setRepos] = React.useState<RepositorySummary[]>([]);
+  const loadedFor = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    if (!open || USE_FIXTURES) return;
+    // Re-fetch when the project changes, not when the palette re-opens.
+    const key = activeProjectId ?? "none";
+    if (loadedFor.current === key) return;
+    loadedFor.current = key;
+
+    let disposed = false;
+
+    void listRepositories()
+      .then((all) => !disposed && setRepos(all))
+      .catch(() => undefined);
+
+    void apiFetch<Concept[]>("/learning")
+      .then((all) => !disposed && setConcepts(all))
+      .catch(() => undefined);
+
+    if (activeProjectId) {
+      void listFindings({ repoId: activeProjectId, limit: 200 })
+        .then((r) => !disposed && setFindings(r.findings))
+        .catch(() => undefined);
+    } else {
+      setFindings([]);
+    }
+
+    return () => {
+      disposed = true;
+    };
+  }, [open, activeProjectId]);
+
+  return { findings, concepts, repos, activeProjectId };
+}
+
 export function CommandPalette({
   open,
   onOpenChange,
@@ -63,6 +122,8 @@ export function CommandPalette({
   const [query, setQuery] = React.useState("");
   const [active, setActive] = React.useState(0);
   const listRef = React.useRef<HTMLDivElement>(null);
+  const [, selectProject] = useActiveProject();
+  const data = usePaletteData(open);
 
   const go = React.useCallback(
     (href: string) => () => {
@@ -72,13 +133,25 @@ export function CommandPalette({
     [onOpenChange, router]
   );
 
+  /** Every screen that reads analysis results is keyed on `?repo=`. */
+  const scoped = React.useCallback(
+    (path: string, extra?: string) => {
+      const repo = data.activeProjectId;
+      const qs = [repo ? `repo=${encodeURIComponent(repo)}` : "", extra ?? ""]
+        .filter(Boolean)
+        .join("&");
+      return qs ? `${path}?${qs}` : path;
+    },
+    [data.activeProjectId]
+  );
+
   const items = React.useMemo<Item[]>(() => {
     const nav: Item[] = [
-      { id: "n-rev", label: "Reviews", group: "Go to", icon: <FileCode2 size={13} />, run: go("/reviews") },
-      { id: "n-ins", label: "Insights", group: "Go to", icon: <LayoutDashboard size={13} />, run: go("/insights") },
-      { id: "n-lrn", label: "Learning", group: "Go to", icon: <BookOpen size={13} />, run: go("/learning") },
-      { id: "n-run", label: "Latest run", group: "Go to", icon: <Play size={13} />, run: go("/runs") },
-      { id: "n-rep", label: "Shareable report", group: "Go to", icon: <ArrowRight size={13} />, run: go("/report/e91c4ad") },
+      { id: "n-rev", label: "Reviews", group: "Go to", icon: <FileCode2 size={13} />, run: go(scoped("/reviews")) },
+      { id: "n-ins", label: "Insights", group: "Go to", icon: <LayoutDashboard size={13} />, run: go(scoped("/insights")) },
+      { id: "n-lrn", label: "Learning", group: "Go to", icon: <BookOpen size={13} />, run: go(scoped("/learning")) },
+      { id: "n-run", label: "Latest run", group: "Go to", icon: <Play size={13} />, run: go(scoped("/runs")) },
+      { id: "n-repos", label: "Repositories", group: "Go to", icon: <GitBranch size={13} />, run: go("/repositories") },
     ];
 
     const actions: Item[] = [
@@ -95,55 +168,110 @@ export function CommandPalette({
       },
       {
         id: "a-rerun",
-        label: "Re-run analysis on this branch",
+        label: "Re-run analysis on this project",
         group: "Actions",
         icon: <Play size={13} />,
         keywords: "analyse scan rerun",
-        run: go("/runs"),
+        run: go(scoped("/runs")),
       },
     ];
 
-    const branches: Item[] = BRANCHES.map((b) => ({
-      id: `b-${b.name}`,
-      label: b.name,
-      hint: `score ${b.score}`,
-      group: "Branches",
+    if (USE_FIXTURES) {
+      return [
+        ...nav,
+        ...actions,
+        ...FINDINGS.map((f) => ({
+          id: `x-${f.id}`,
+          label: f.title,
+          hint: `${severityMeta[f.severity].label} · ${f.ruleKey} · line ${f.line}`,
+          group: "Findings",
+          icon: <SeverityGlyph severity={f.severity} size={12} />,
+          keywords: `${f.cwe?.id ?? ""} ${f.category} ${f.ruleKey} ${f.engine}`,
+          run: go(`/reviews?finding=${f.id}`),
+        })),
+        ...flattenFiles(FILE_TREE).map((f) => ({
+          id: `f-${f.path}`,
+          label: fileName(f.path),
+          hint: truncatePath(f.path, 5),
+          group: "Files",
+          icon: <FileCode2 size={13} />,
+          keywords: f.path,
+          run: go(`/reviews?file=${encodeURIComponent(f.path)}`),
+        })),
+        ...BRANCHES.map((b) => ({
+          id: `b-${b.name}`,
+          label: b.name,
+          hint: `score ${b.score}`,
+          group: "Branches",
+          icon: <GitBranch size={13} />,
+          run: go("/reviews"),
+        })),
+        ...CONCEPTS.map((c) => ({
+          id: `c-${c.id}`,
+          label: c.title,
+          hint: `${c.difficulty} · ${c.readMinutes} min`,
+          group: "Concepts",
+          icon: <Hash size={13} />,
+          keywords: `${c.category} ${c.relatedCwe ?? ""}`,
+          run: go(`/learning/${c.id}`),
+        })),
+      ];
+    }
+
+    // Projects, not branches: a local folder has one branch and switching it is
+    // not something this tool can do. Switching project is.
+    const projects: Item[] = data.repos.map((r) => ({
+      id: `p-${r.id}`,
+      label: r.name,
+      hint: r.loc != null ? `${r.loc.toLocaleString()} lines · ${r.branch}` : r.branch,
+      group: "Projects",
       icon: <GitBranch size={13} />,
-      run: go("/reviews"),
+      keywords: r.localPath ?? "",
+      run: () => {
+        selectProject(r.id);
+        onOpenChange(false);
+        router.push(`/runs?repo=${encodeURIComponent(r.id)}`);
+      },
     }));
 
-    const files: Item[] = flattenFiles(FILE_TREE).map((f) => ({
-      id: `f-${f.path}`,
-      label: fileName(f.path),
-      hint: truncatePath(f.path, 5),
-      group: "Files",
-      icon: <FileCode2 size={13} />,
-      keywords: f.path,
-      run: go(`/reviews?file=${encodeURIComponent(f.path)}`),
-    }));
-
-    const findings: Item[] = FINDINGS.map((f) => ({
+    const findings: Item[] = data.findings.map((f) => ({
       id: `x-${f.id}`,
       label: f.title,
-      hint: `${severityMeta[f.severity].label} · ${f.ruleKey} · line ${f.line}`,
+      hint: `${severityMeta[f.severity].label} · ${f.ruleKey} · ${fileName(f.file)}:${f.line}`,
       group: "Findings",
       icon: <SeverityGlyph severity={f.severity} size={12} />,
-      keywords: `${f.cwe?.id ?? ""} ${f.category} ${f.ruleKey} ${f.engine}`,
-      run: go(`/reviews?finding=${f.id}`),
+      keywords: `${f.cwe?.id ?? ""} ${f.category} ${f.ruleKey} ${f.engine} ${f.file}`,
+      run: go(scoped("/reviews", `finding=${encodeURIComponent(f.id)}`)),
     }));
 
-    const concepts: Item[] = CONCEPTS.map((c) => ({
+    // Derived from the findings already loaded rather than a second request for
+    // the tree: the files worth jumping to are the ones carrying a finding.
+    const files: Item[] = [...new Set(data.findings.map((f) => f.file))].map((path) => ({
+      id: `f-${path}`,
+      label: fileName(path),
+      hint: truncatePath(path, 5),
+      group: "Files",
+      icon: <FileCode2 size={13} />,
+      keywords: path,
+      run: go(scoped("/reviews", `file=${encodeURIComponent(path)}`)),
+    }));
+
+    const concepts: Item[] = data.concepts.map((c) => ({
       id: `c-${c.id}`,
       label: c.title,
       hint: `${c.difficulty} · ${c.readMinutes} min`,
       group: "Concepts",
       icon: <Hash size={13} />,
       keywords: `${c.category} ${c.relatedCwe ?? ""}`,
-      run: go(`/learning/${c.id}`),
+      run: go(
+        data.activeProjectId
+          ? `/learning/${c.id}?repo=${encodeURIComponent(data.activeProjectId)}`
+          : `/learning/${c.id}`
+      ),
     }));
 
-    return [...nav, ...actions, ...findings, ...files, ...branches, ...concepts];
-  }, [go, onOpenChange, setTheme, theme]);
+    return [...nav, ...actions, ...findings, ...files, ...projects, ...concepts];
+  }, [go, scoped, onOpenChange, setTheme, theme, data, selectProject, router]);
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();

@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import type { Rating, Severity } from "./types";
+import type { Engine, Rating, Severity } from "./types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -178,15 +178,28 @@ export function dirName(path: string) {
   return parts.join("/");
 }
 
-export const engineLabel: Record<string, string> = {
+/**
+ * Display names, keyed by the `Engine` union in types.ts.
+ *
+ * ⚠️ Every Engine value MUST have an entry. A missing key renders as an empty
+ *    string in the stage row and the finding list — silent, and easy to miss in
+ *    review. `labelForEngine()` below is the safe accessor; prefer it.
+ */
+export const engineLabel: Record<Engine, string> = {
   "codementor-ai": "CodeMentor AI",
-  sonarqube: "SonarQube",
-  eslint: "ESLint",
   semgrep: "Semgrep",
-  checkmarx: "Checkmarx SAST",
+  eslint: "ESLint",
+  sonarjs: "SonarJS",
+  jscpd: "jscpd",
+  gitleaks: "Gitleaks",
+  osv: "OSV",
   lighthouse: "Lighthouse",
-  "dependency-audit": "Dependency audit",
 };
+
+/** Never returns undefined — an unknown engine falls back to its raw id. */
+export function labelForEngine(engine: string): string {
+  return engineLabel[engine as Engine] ?? engine;
+}
 
 export const issueTypeLabel: Record<string, string> = {
   vulnerability: "Vulnerability",

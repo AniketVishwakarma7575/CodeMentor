@@ -27,27 +27,53 @@ import { SeverityGlyph } from "@/components/severity";
    something to be a drop *from*.
    ========================================================================== */
 
-export function ScoreTrend() {
-  const last = TREND[TREND.length - 1].score;
-  const first = TREND[0].score;
+export interface ScorePoint {
+  commit: string;
+  score: number;
+}
+
+/**
+ * `points` defaults to the fixture series so the design mode still renders the
+ * full 30-commit story. Real data arrives as a prop — usually far fewer points,
+ * which is why the title carries the count and the tick interval is derived
+ * rather than pinned at 6.
+ *
+ * `baseline` is optional because a local folder has no `main` to be measured
+ * against. Drawing the fixture's "main 52" line over three real runs would
+ * assert a comparison that was never made.
+ */
+export function ScoreTrend({
+  points = TREND,
+  title,
+  why = "Flat through c01–c26, then −21 across the last four commits — all of it on feat/order-search, where the order-search handlers were added without parameter binding.",
+  baseline = { value: 52, label: "main 52" },
+}: {
+  points?: ScorePoint[];
+  title?: string;
+  why?: string;
+  baseline?: { value: number; label: string } | null;
+} = {}) {
+  if (points.length === 0) return null;
+  const last = points[points.length - 1].score;
+  const first = points[0].score;
 
   return (
     <ChartFrame
-      title="Quality score · last 30 commits"
+      title={title ?? `Quality score · last ${points.length} runs`}
       value={last}
       delta={<Delta value={last - first} />}
-      why="Flat through c01–c26, then −21 across the last four commits — all of it on feat/order-search, where the order-search handlers were added without parameter binding."
+      why={why}
       className="min-h-[196px]"
     >
       <ResponsiveContainer width="100%" height={140}>
-        <LineChart data={TREND} margin={{ top: 8, right: 34, bottom: 4, left: 4 }}>
+        <LineChart data={points} margin={{ top: 8, right: 34, bottom: 4, left: 4 }}>
           <CartesianGrid stroke={AXIS.stroke} vertical={false} />
           <XAxis
             dataKey="commit"
             tickLine={false}
             axisLine={false}
             tick={AXIS.tick}
-            interval={6}
+            interval={tickInterval(points.length)}
             minTickGap={12}
           />
           <YAxis
@@ -58,18 +84,20 @@ export function ScoreTrend() {
             tick={AXIS.tick}
             width={22}
           />
-          <ReferenceLine
-            y={52}
-            stroke="var(--border-strong)"
-            strokeWidth={1}
-            label={{
-              value: "main 52",
-              position: "insideTopRight",
-              fill: "var(--text-faint)",
-              fontSize: 10,
-              fontFamily: "var(--font-mono)",
-            }}
-          />
+          {baseline ? (
+            <ReferenceLine
+              y={baseline.value}
+              stroke="var(--border-strong)"
+              strokeWidth={1}
+              label={{
+                value: baseline.label,
+                position: "insideTopRight",
+                fill: "var(--text-faint)",
+                fontSize: 10,
+                fontFamily: "var(--font-mono)",
+              }}
+            />
+          ) : null}
           <Tooltip
             cursor={{ stroke: "var(--border-strong)", strokeWidth: 1 }}
             content={<ChartTooltip labelPrefix="commit " />}
@@ -91,7 +119,7 @@ export function ScoreTrend() {
             stroke="none"
             isAnimationActive={false}
             dot={(props: { cx?: number; cy?: number; index?: number }) =>
-              props.index === TREND.length - 1 ? (
+              props.index === points.length - 1 ? (
                 <g key="end">
                   <circle cx={props.cx} cy={props.cy} r={3.5} fill={scoreColorVar(last)} />
                   <text
@@ -140,19 +168,60 @@ const FACETS: { key: FacetKey; why: string }[] = [
   { key: "low", why: "−4 over the window — mostly max-len cleared by the formatter." },
 ];
 
-export function SeverityFacets() {
+export interface SeverityPoint {
+  idx: number;
+  commit: string;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  /** Not faceted — see the note on the facet header — but counted in totals. */
+  info?: number;
+}
+
+/**
+ * `notes` replaces the per-facet narrative when real data is supplied. The
+ * fixture strings name specific commits ("+2 at c28 — both SQL injections
+ * landed in one commit") and are false about any other repository, so a caller
+ * passing real points must pass its own notes with them.
+ */
+export function SeverityFacets({
+  points = SEVERITY_TREND,
+  notes,
+}: {
+  points?: SeverityPoint[];
+  notes?: Partial<Record<FacetKey, string>>;
+} = {}) {
+  if (points.length === 0) return null;
+
+  // ⚠️ ONE domain for all four facets. Per-facet auto-scaling is what makes
+  //    "low: 11" and "critical: 3" draw the same height, which is the exact
+  //    misreading this layout exists to prevent. Derived from the data rather
+  //    than pinned, with a floor so a flat all-zero window is not a full-height
+  //    band of nothing.
+  const peak = Math.max(1, ...points.flatMap((d) => [d.critical, d.high, d.medium, d.low]));
+  const domain: [number, number] = [0, Math.ceil(peak * 1.15)];
+  const infoTotal = points[points.length - 1].info ?? 0;
+
   return (
     <div className="rounded-lg border border-subtle bg-surface">
       <div className="flex items-baseline justify-between px-3 pb-1 pt-2.5">
         <span className="text-2xs font-medium uppercase tracking-[0.04em] text-fg-faint">
-          Findings by severity · last 30 commits
+          Findings by severity · last {points.length === 1 ? "run" : `${points.length} runs`}
         </span>
-        <span className="text-2xs text-fg-faint">shared y-scale</span>
+        {/* Says so explicitly: four facets over five severities means these
+            columns do not add up to the headline count, and a reader who tries
+            to reconcile them deserves to know why rather than to conclude one
+            of the two numbers is wrong. */}
+        <span className="text-2xs text-fg-faint">
+          shared y-scale{infoTotal > 0 ? ` · ${infoTotal} info not shown` : ""}
+        </span>
       </div>
 
       <div className="grid grid-cols-2 gap-px bg-[var(--border-subtle)] xl:grid-cols-4">
-        {FACETS.map(({ key, why }) => {
-          const series = SEVERITY_TREND.map((d) => ({ idx: d.idx, commit: d.commit, v: d[key] }));
+        {FACETS.map(({ key, why: fixtureWhy }) => {
+          const why = notes ? notes[key] : fixtureWhy;
+          const series = points.map((d) => ({ idx: d.idx, commit: d.commit, v: d[key] }));
           const now = series[series.length - 1].v;
           const then = series[0].v;
           return (
@@ -176,7 +245,7 @@ export function SeverityFacets() {
                   </defs>
                   {/* Shared domain across all four facets — otherwise each chart
                       silently rescales and "low: 11" looks like "critical: 3". */}
-                  <YAxis domain={[0, 16]} hide />
+                  <YAxis domain={domain} hide />
                   <XAxis dataKey="commit" hide />
                   <Tooltip
                     cursor={{ stroke: "var(--border-strong)", strokeWidth: 1 }}
@@ -196,7 +265,7 @@ export function SeverityFacets() {
                 </AreaChart>
               </ResponsiveContainer>
 
-              <p className="px-1 text-2xs leading-[1.4] text-fg-muted">{why}</p>
+              {why ? <p className="px-1 text-2xs leading-[1.4] text-fg-muted">{why}</p> : null}
             </div>
           );
         })}
@@ -269,10 +338,20 @@ export function DimensionBars({ dimensions }: { dimensions: Dimension[] }) {
    answer, just without four near-adjacent hues fighting each other.
    ========================================================================== */
 
-export function TotalFindingsArea() {
-  const data = SEVERITY_TREND.map((d) => ({
+export function TotalFindingsArea({
+  points = SEVERITY_TREND,
+  why,
+}: {
+  points?: SeverityPoint[];
+  why?: string;
+} = {}) {
+  if (points.length === 0) return null;
+  // `info` included. This chart is titled "total", and the headline stat counts
+  // every severity — a chart that quietly dropped one would put 30 next to 35
+  // on the same screen with nothing to explain the gap.
+  const data = points.map((d) => ({
     commit: d.commit,
-    total: d.critical + d.high + d.medium + d.low,
+    total: d.critical + d.high + d.medium + d.low + (d.info ?? 0),
   }));
   const now = data[data.length - 1].total;
   const then = data[0].total;
@@ -282,7 +361,10 @@ export function TotalFindingsArea() {
       title="Total open findings"
       value={now}
       delta={<Delta value={now - then} invert />}
-      why={`Net ${now - then > 0 ? "+" : "−"}${Math.abs(now - then)} over 30 commits. The rise is concentrated in the last four; low-severity noise fell as the formatter landed at c19.`}
+      why={
+        why ??
+        `Net ${now - then > 0 ? "+" : "−"}${Math.abs(now - then)} over ${points.length} runs. The rise is concentrated in the last four; low-severity noise fell as the formatter landed at c19.`
+      }
       className="min-h-[196px]"
     >
       <ResponsiveContainer width="100%" height={140}>
@@ -294,7 +376,13 @@ export function TotalFindingsArea() {
             </linearGradient>
           </defs>
           <CartesianGrid stroke={AXIS.stroke} vertical={false} />
-          <XAxis dataKey="commit" tickLine={false} axisLine={false} tick={AXIS.tick} interval={6} />
+          <XAxis
+            dataKey="commit"
+            tickLine={false}
+            axisLine={false}
+            tick={AXIS.tick}
+            interval={tickInterval(data.length)}
+          />
           <YAxis tickLine={false} axisLine={false} tick={AXIS.tick} width={22} />
           <Tooltip
             cursor={{ stroke: "var(--border-strong)", strokeWidth: 1 }}
@@ -315,6 +403,17 @@ export function TotalFindingsArea() {
       </ResponsiveContainer>
     </ChartFrame>
   );
+}
+
+/**
+ * Roughly five x-axis labels, whatever the series length.
+ *
+ * Recharts' `interval` is "skip N between ticks", so it has to be derived: the
+ * fixture's hardcoded 6 is right for 30 points and renders a single lonely tick
+ * for a repo with three runs.
+ */
+function tickInterval(count: number): number {
+  return Math.max(0, Math.ceil(count / 5) - 1);
 }
 
 /* -- quality gate ----------------------------------------------------------- */

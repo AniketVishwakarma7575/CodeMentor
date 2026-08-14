@@ -1,4 +1,4 @@
-import type { Concept, Dimension, FileNode, RepoScore, SkillSignal } from "@/lib/types";
+import type { Concept, Dimension, FileNode, RepoScore, RunStage, SkillSignal } from "@/lib/types";
 
 export const REPO = {
   name: "acme/checkout-service",
@@ -10,6 +10,39 @@ export const REPO = {
   files: 312,
   loc: 48219,
 };
+
+/**
+ * A finished run's stages, for the sample review.
+ *
+ * These numbers are invented, which is exactly why they live in `data/` with
+ * every other fixture instead of inside the component that renders them. The
+ * empty state used to carry its own hardcoded engine table, so a REAL run
+ * rendered fabricated timings for engines that had not run — the fixtures were
+ * indistinguishable from the product. Anything invented belongs here, and only
+ * here, where `USE_FIXTURES` decides whether it is ever seen.
+ *
+ * Deliberately not all-green: `verify` is degraded in the product too, and a
+ * sample screen where everything succeeds hides the state that needs design.
+ */
+export const RUN_STAGES: RunStage[] = [
+  { id: "clone", label: "Cloning repository", status: "complete", durationMs: 1_180, findings: 0 },
+  { id: "detect", label: "Detecting languages", status: "complete", durationMs: 240, findings: 0 },
+  { id: "static", label: "Static analysis", engine: "eslint", status: "complete", durationMs: 6_400, findings: 9 },
+  { id: "security", label: "Security scan", engine: "semgrep", status: "complete", durationMs: 18_900, findings: 4 },
+  { id: "complexity", label: "Complexity & duplication", engine: "sonarjs", status: "complete", durationMs: 11_400, findings: 6 },
+  { id: "ai", label: "AI review", engine: "codementor-ai", status: "complete", durationMs: 23_800, findings: 5 },
+  {
+    id: "verify",
+    label: "Verifying fixes",
+    status: "degraded",
+    durationMs: 90,
+    findings: 0,
+    note: "Fix verification arrives with the worktree loop (Milestone 9)",
+  },
+  { id: "score", label: "Scoring", status: "complete", durationMs: 120, findings: 0 },
+];
+
+export const RUN_DURATION_MS = 62_130;
 
 export const BRANCHES = [
   { name: "feat/order-search", score: 34, delta: -18, active: true },

@@ -9,12 +9,14 @@ import {
   Check,
   ChevronDown,
   Clock3,
+  Lightbulb,
   Minus,
   Scale,
   Sparkle,
+  TrendingUp,
   X,
 } from "lucide-react";
-import type { Finding, VerificationCheck } from "@/lib/types";
+import type { Finding, ImprovementNote, VerificationCheck } from "@/lib/types";
 import {
   cn,
   engineLabel,
@@ -65,6 +67,17 @@ export function FindingCard({
   const [showFlow, setShowFlow] = React.useState(false);
   const reduce = useReducedMotion();
   const applied = finding.status === "applied";
+  /** Only a mechanical patch can be written to the file — see the footer. */
+  const committable = Boolean(finding.fix?.committable);
+  /**
+   * The verification loop applied this patch to a copy and found a problem.
+   *
+   * The server refuses to write a patch carrying a failed check, so the button
+   * must not offer to. The failing row is already rendered in red under the
+   * diff — this is why it is worth reading rather than a badge to skim past.
+   */
+  const rejected = finding.verification.some((c) => c.state === "failed");
+  const canApply = Boolean(finding.fix) && !rejected;
 
   return (
     <motion.article
@@ -248,6 +261,26 @@ export function FindingCard({
           </div>
         ) : null}
 
+        {/* ---- 3b. the better approach ------------------------------------- */}
+        {/* Above the diff, not below it. The diff answers "what edit"; this
+            answers "why that edit" — and a reader who disagrees with the
+            reasoning should not have to scroll past the patch to find it.
+            Renders on its own when there is no committable patch, which for a
+            contextual finding is the common case. */}
+        {finding.betterApproach ? (
+          <section className="border-b border-subtle px-4 py-3">
+            <div className="flex gap-2.5">
+              <Lightbulb size={13} className="mt-0.5 shrink-0 text-fg-muted" aria-hidden />
+              <div className="min-w-0">
+                <Eyebrow>Better approach</Eyebrow>
+                <p className="mt-0.5 text-sm leading-[1.5] text-fg-secondary">
+                  {finding.betterApproach}
+                </p>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
         {/* ---- 4. the fix -------------------------------------------------- */}
         {finding.fix ? (
           <section className="border-b border-subtle px-4 py-3">
@@ -267,6 +300,32 @@ export function FindingCard({
 
             {/* ---- 5. verification ----------------------------------------- */}
             <VerificationRow checks={finding.verification} />
+          </section>
+        ) : null}
+
+        {/* ---- 5b. what fixing it buys ------------------------------------- */}
+        {/* Sits between the fix and the trade-off on purpose: gain, then cost,
+            in the order someone deciding whether to do the work reads them. */}
+        {finding.improvements?.length ? (
+          <section className="border-b border-subtle px-4 py-3">
+            <div className="flex gap-2.5">
+              <TrendingUp size={13} className="mt-0.5 shrink-0 text-fg-muted" aria-hidden />
+              <div className="min-w-0 flex-1">
+                <Eyebrow>What this fixes</Eyebrow>
+                <ul className="mt-1 space-y-1">
+                  {finding.improvements.map((note, i) => (
+                    <li key={i} className="flex min-w-0 gap-2 text-sm leading-[1.5]">
+                      {/* The label is the same axis the dashboard scores, so a
+                          reader can connect the claim to the number it moves. */}
+                      <span className="mt-px w-[92px] shrink-0 text-2xs font-medium uppercase tracking-[0.04em] text-fg-faint">
+                        {DIMENSION_LABEL[note.dimension]}
+                      </span>
+                      <span className="min-w-0 flex-1 text-fg-secondary">{note.text}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
           </section>
         ) : null}
 
@@ -311,18 +370,39 @@ export function FindingCard({
         <div className="h-2" />
       </div>
 
-      {/* ---- 8. actions — pinned, always reachable ------------------------- */}
+      {/* ---- 8. actions — pinned, always reachable -------------------------
+          ⚠️ The button is disabled for a patch that is not `committable`, and
+             says why. The server refuses those (a suggestion needing an import
+             or a signature change cannot be applied unattended), so leaving it
+             enabled would offer an action guaranteed to fail — the reader would
+             click, get a red toast, and learn nothing the card could not have
+             told them before they clicked. */}
       <footer className="flex shrink-0 items-center gap-1.5 border-t border-subtle bg-surface px-3 py-2">
         <Button
           variant="primary"
           size="sm"
           onClick={onApply}
-          disabled={applied || !finding.fix}
+          disabled={applied || rejected || !finding.fix}
+          title={
+            rejected
+              ? "This patch failed verification, so it will not be written."
+              : finding.fix && !finding.fix.committable
+                ? "This is a suggested patch. Apply it, then review the code before committing."
+                : undefined
+          }
           className="gap-1.5"
         >
           {applied ? <Check size={13} aria-hidden /> : <Sparkle size={13} aria-hidden />}
-          {applied ? "Fix applied" : "Apply fix"}
-          {!applied ? <Kbd className="ml-0.5 border-transparent bg-transparent text-fg-inverse/60">a</Kbd> : null}
+          {applied
+            ? "Fix applied"
+            : rejected
+              ? "Failed verification"
+              : committable
+                ? "Apply fix"
+                : "Apply suggestion"}
+          {!applied && canApply ? (
+            <Kbd className="ml-0.5 border-transparent bg-transparent text-fg-inverse/60">a</Kbd>
+          ) : null}
         </Button>
         <Button variant="secondary" size="sm" onClick={onToggleExpand}>
           Explain more
@@ -342,6 +422,20 @@ export function FindingCard({
     </motion.article>
   );
 }
+
+/**
+ * Dimension keys → the labels the dashboard already uses.
+ *
+ * Written out rather than title-cased from the key so the card and the score
+ * panel can never drift into calling the same axis two different things.
+ */
+const DIMENSION_LABEL: Record<ImprovementNote["dimension"], string> = {
+  security: "Security",
+  reliability: "Reliability",
+  performance: "Performance",
+  maintainability: "Maintainability",
+  readability: "Readability",
+};
 
 /* -- pieces ----------------------------------------------------------------- */
 
@@ -371,8 +465,22 @@ function Column({ label, text, accent }: { label: string; text: string; accent?:
  * Verification.
  * A tick is never the only signal — the state also changes the glyph and the
  * label prefix, so a failed check is unmistakable in greyscale.
+ *
+ * ⚠️ RENDERS NOTHING WHEN NOTHING WAS VERIFIED.
+ *
+ *    The verify stage degrades on every run today (the worktree loop is
+ *    Milestone 9), so the backend persists `verification: []` and this row was
+ *    drawing an empty strip under every patch — a checklist with no checks,
+ *    which reads as "verified, no issues" rather than "not verified".
+ *
+ *    An empty array is the honest input; the honest output is silence. The run
+ *    screen already reports the stage as degraded and says why, which is where
+ *    a reader should learn that verification did not happen — not from an
+ *    ambiguous gap under a diff.
  */
 function VerificationRow({ checks }: { checks: VerificationCheck[] }) {
+  if (checks.length === 0) return null;
+
   const failed = checks.filter((c) => c.state === "failed");
 
   return (

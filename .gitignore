@@ -7,5 +7,8 @@ build
 npm-debug.log*
 .env*
 !.env.example
+# Template for local config — carries no secrets and MUST be committed,
+# otherwise a fresh clone cannot know what NEXT_PUBLIC_API_BASE should be.
+!.env.local.example
 next-env.d.ts
 tsconfig.tsbuildinfo
