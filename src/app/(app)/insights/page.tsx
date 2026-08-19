@@ -30,11 +30,17 @@ export const metadata = { title: "Insights" };
  *
  * ── EVERY NUMBER ON THIS PAGE IS FROM A REAL RUN ──
  *
- * Except two, which are not measured at all, and say so rather than
- * substituting a plausible-looking figure: see `coverageStat` and
- * `duplicationStat`. That distinction is the point of the screen — a dashboard
- * that mixes measurements with decoration cannot be used to make a decision,
- * because the reader has no way to tell which is which.
+ * Except coverage, which nothing measures yet and which says so rather than
+ * substituting a plausible-looking figure — see `coverageStat`. That
+ * distinction is the point of the screen: a dashboard that mixes measurements
+ * with decoration cannot be used to make a decision, because the reader has no
+ * way to tell which is which.
+ *
+ * Duplication used to be in that same sentence. It is a real measurement now
+ * that jscpd runs, and `duplicationStat` reads it back off the quality gate so
+ * the tile and the gate row cannot disagree — but it still falls back to the
+ * dash when a run's complexity stage degraded, because "not measured" and
+ * "measured, and it is zero" must never render the same way.
  */
 export default async function InsightsPage({
   searchParams,
@@ -246,25 +252,49 @@ function coverageStat() {
 }
 
 /**
- * Duplication is not measured either, and the gate now says so by omission
- * rather than by scoring it.
+ * Duplication — measured, now that jscpd runs.
  *
- * It used to be reported as a flat 0% — the orchestrator passed a literal zero
- * — which put a row in every gate that read like a measurement and could never
- * fail. Both are `null` at the source now, so the condition simply is not
- * there, exactly as with coverage. If jscpd ever does run, the row reappears
- * with a real number and this tile renders it instead of the dash.
+ * ── THE HISTORY THIS TILE CARRIES ──
+ *
+ * It was once reported as a flat 0%, because the orchestrator passed a literal
+ * zero for a number nobody computed. That put a row in every gate that read
+ * exactly like a measurement and could never fail. The fix was to make it
+ * `null` at the source, so the gate omitted the condition and this tile showed
+ * a dash — honest, and useless.
+ *
+ * jscpd closes it properly: the complexity stage produces a real percentage,
+ * the gate condition reappears, and this reads it back off the gate rather
+ * than from a second source. Reading it from the gate is deliberate — it means
+ * the tile and the gate row physically cannot disagree about the number, and
+ * the dash still appears if the stage degraded and nothing was measured.
+ *
+ * ⚠️ The dash branch is NOT dead code. A run whose complexity stage degraded
+ *    has no duplication figure, and `null` must keep rendering as "not
+ *    measured" rather than as zero. That is the whole defect above, and it
+ *    would come straight back if this branch were deleted as unreachable.
  */
 function duplicationStat(gate: QualityGate | null) {
   const condition = gate?.conditions.find((c) => c.metric.toLowerCase().includes("duplicat"));
+
   if (condition) {
-    return <Stat label="Duplication" value={`${condition.actual}%`} note="Measured on this run" />;
+    const failed = condition.status === "failed";
+    return (
+      <Stat
+        label="Duplication"
+        value={`${condition.actual}%`}
+        // The threshold, not just the value — a percentage with nothing to
+        // compare it against is a number the reader cannot act on.
+        note={`${condition.threshold}% allowed · measured on this run`}
+        bad={failed}
+      />
+    );
   }
+
   return (
     <Stat
       label="Duplication"
       value="—"
-      note="Not measured — no duplication engine runs yet"
+      note="Not measured — the duplication stage did not complete on this run"
       muted
     />
   );

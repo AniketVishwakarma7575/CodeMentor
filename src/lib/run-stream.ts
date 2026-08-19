@@ -17,12 +17,21 @@ import { API_BASE, USE_FIXTURES } from "@/lib/api/config";
    run screen when NEXT_PUBLIC_USE_FIXTURES=true (design work, offline, demos).
    ========================================================================== */
 
+/**
+ * ⚠️ MIRRORS the backend's `shared/types/run-events.ts:STAGE_TEMPLATE`. Both
+ *    lists must stay identical — the orchestrator drives exactly this order.
+ *
+ * `engine` names a stage's engine only when it has exactly ONE. It is omitted
+ * for `static`, which now runs the built-in rules, SonarJS, and — only if a
+ * repository has opted in — ESLint. It used to say `eslint`, which named the
+ * one engine in that stage least likely to have actually run.
+ */
 export const STAGE_TEMPLATE: Omit<RunStage, "status" | "durationMs" | "findings">[] = [
   { id: "clone", label: "Cloning repository" },
   { id: "detect", label: "Detecting languages" },
-  { id: "static", label: "Static analysis", engine: "eslint" },
+  { id: "static", label: "Static analysis" },
   { id: "security", label: "Security scan", engine: "semgrep" },
-  { id: "complexity", label: "Complexity & duplication", engine: "sonarjs" },
+  { id: "complexity", label: "Complexity & duplication", engine: "jscpd" },
   { id: "ai", label: "AI review", engine: "codementor-ai" },
   { id: "verify", label: "Verifying fixes" },
   { id: "score", label: "Scoring" },

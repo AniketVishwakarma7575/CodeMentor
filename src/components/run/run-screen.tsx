@@ -521,7 +521,30 @@ export function RunScreen({
                   Nothing yet. Findings appear here the moment an analyzer reports one.
                 </p>
               ) : (
-                <ul>
+                /*
+                 * ⚠️ ITS OWN SCROLL REGION, CAPPED.
+                 *
+                 * This list is appended to live as the run streams, and it used
+                 * to grow without limit — so a real analysis pushed the page to
+                 * several thousand pixels and the pipeline, the score and the
+                 * stage notes scrolled off the top exactly while they were the
+                 * things worth watching. It got much worse when SonarJS, jscpd
+                 * and Gitleaks landed: a run that used to report a handful of
+                 * findings now routinely reports dozens.
+                 *
+                 * Viewport-relative rather than a fixed pixel height, because
+                 * the pipeline section above it is itself tall — a fixed cap
+                 * that looks right on a desktop leaves nothing visible on a
+                 * laptop. `min()` keeps it from becoming absurd on a large
+                 * display.
+                 *
+                 * `overscroll-contain` stops a flick at the end of the list
+                 * from chaining into the page scroll underneath, which reads as
+                 * the whole screen jumping.
+                 *
+                 * Same idiom as the raw log above — see `max-h-[220px]`.
+                 */
+                <ul className="max-h-[min(560px,55vh)] overflow-y-auto overscroll-contain">
                   <AnimatePresence initial={false}>
                     {found.map((f) => (
                       <motion.li

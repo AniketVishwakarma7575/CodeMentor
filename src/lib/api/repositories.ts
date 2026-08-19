@@ -31,6 +31,14 @@ export interface RepositorySummary {
   available: boolean;
   scannedAt: string | null;
   connectedAt: string;
+  /**
+   * Has this project opted into engines that EXECUTE its own code?
+   *
+   * Mirrors `RepositorySummary.allowTier2` on the backend. `=== true` there,
+   * so a project connected before the field existed reports false rather than
+   * undefined — the ABSENCE of an opt-in is not an opt-in.
+   */
+  allowTier2: boolean;
 }
 
 export interface DirEntry {
@@ -73,6 +81,10 @@ export const FIXTURE_REPOS: RepositorySummary[] = [
   available: true,
   scannedAt: null,
   connectedAt: new Date().toISOString(),
+  // Off for every fixture, and it must stay that way: these are sample rows,
+  // and a design-mode project that claims to permit code execution would be
+  // the one fixture value with a real-world consequence attached.
+  allowTier2: false,
 }));
 
 /* -- fetchers --------------------------------------------------------------- */
@@ -176,4 +188,26 @@ export function rescanRepository(id: string): Promise<RepositorySummary> {
 /** Removes the CONNECTION. The folder on disk is never touched. */
 export function disconnectRepository(id: string): Promise<void> {
   return apiFetch<void>(`/repositories/${id}`, { method: "DELETE" });
+}
+
+/**
+ * Grant or revoke this project's tier-2 opt-in.
+ *
+ * ⚠️ THE ONLY CALL IN THIS CLIENT THAT GRANTS CODE EXECUTION.
+ *
+ *    `allowTier2: true` lets the ESLint engine load this project's own
+ *    `eslint.config.js` — a JavaScript module the API process EVALUATES, along
+ *    with every plugin it imports. Only ever call this from a control that
+ *    says so; see the tier-2 row on the settings screen.
+ *
+ * Returns the value as STORED. The caller must render the response rather than
+ * the value it asked for — the deployment-wide switch is independent, and a UI
+ * that echoes its own optimistic state cannot tell "saved" from "saved and
+ * still inert".
+ */
+export function setRepositoryTier2(id: string, allowTier2: boolean): Promise<{ allowTier2: boolean }> {
+  return apiFetch<{ allowTier2: boolean }>(`/repositories/${id}/settings`, {
+    method: "PATCH",
+    body: JSON.stringify({ allowTier2 }),
+  });
 }

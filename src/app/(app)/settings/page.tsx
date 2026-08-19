@@ -8,6 +8,7 @@ import { repositoryServer } from "@/lib/api/server-fetchers";
 import type { QualityGate } from "@/lib/types";
 import { pluralize } from "@/lib/utils";
 import { Eyebrow } from "@/components/ui/primitives";
+import { Tier2Toggle } from "@/components/settings/tier2-toggle";
 
 export const metadata = { title: "Settings" };
 
@@ -23,14 +24,25 @@ export const metadata = { title: "Settings" };
  * their code had been through taint analysis and a dependency audit.
  *
  * The roster now comes from `GET /engines`, which reports what is implemented
- * and what is merely reserved. One engine is active. Saying so is the point.
+ * and what is merely reserved. Reporting that honestly is the whole point of
+ * the screen — in BOTH directions. It has been wrong each way: it once claimed
+ * six analyzers ran when one did, and later reported a fully-working engine as
+ * unbuilt because nobody updated its row. The count in the header is derived
+ * from the same response the rows are, so the two cannot disagree.
  *
- * ── WHY NOTHING HERE IS EDITABLE ──
+ * ── WHAT IS EDITABLE, AND WHAT IS NOT ──
  *
- * There is no write endpoint. `RepositorySettings` exists on the schema, but
- * the repositories controller exposes no PATCH, so a toggle on this page could
- * not persist. A switch that silently does nothing is worse than a value the
- * screen admits is read-only.
+ * Almost nothing, still — and that is honest rather than unfinished. The gate
+ * thresholds shown below are read back off the last RUN, so editing them here
+ * would retroactively change what past runs are reported to have meant; that
+ * needs an endpoint with its own thinking about history.
+ *
+ * The exception is the tier-2 opt-in, which now has a real write behind it
+ * (`PATCH /repositories/:id/settings`). It had to: the engine registry renders
+ * a row telling the reader ESLint "stays off until the repository opts in",
+ * and until that endpoint existed the product offered no way to perform the
+ * opt-in it was instructing them to perform. An instruction the reader cannot
+ * follow is worse than a missing feature.
  */
 export default async function SettingsPage({
   searchParams,
@@ -57,8 +69,9 @@ export default async function SettingsPage({
       <div className="mx-auto max-w-[760px] px-5 py-4">
         <h1 className="text-lg font-semibold tracking-[-0.011em] text-fg">Settings</h1>
         <p className="mt-0.5 text-sm text-fg-muted">
-          Read-only. Nothing on this screen can be changed yet — there is no endpoint to save it
-          to.
+          Mostly a report of what actually ran. The one thing you can change here is whether a
+          project is allowed to have its own toolchain executed — everything else is read back off
+          the last analysis.
         </p>
 
         <section className="mt-4">
@@ -88,8 +101,9 @@ export default async function SettingsPage({
               {configured.length > 0 ? (
                 <>
                   <p className="mt-3 text-2xs text-fg-faint">
-                    Built, but switched off — these did not run on the last analysis because a
-                    credential is missing. Supplying it is all they need.
+                    Built, but switched off — these did not run on the last analysis. Each row says
+                    what it is waiting for: a credential, a binary on PATH, or an explicit opt-in
+                    for an engine that executes the analysed project&rsquo;s own code.
                   </p>
                   <ul className="mt-1.5 divide-y divide-[var(--border-subtle)] rounded-lg border border-subtle bg-surface">
                     {configured.map((e) => (
@@ -99,18 +113,49 @@ export default async function SettingsPage({
                 </>
               ) : null}
 
-              <p className="mt-3 text-2xs text-fg-faint">
-                Not implemented yet — these do not run, and no finding on any screen came from
-                them.
-              </p>
-              <ul className="mt-1.5 divide-y divide-[var(--border-subtle)] rounded-lg border border-subtle bg-surface opacity-70">
-                {planned.map((e) => (
-                  <EngineRow key={e.id} engine={e} />
-                ))}
-              </ul>
+              {/*
+                ⚠️ GUARDED, like `configured` above — and it did not used to be.
+                   The caption and the bordered list rendered unconditionally,
+                   so the moment the last `planned` engine shipped, this screen
+                   drew the heading "Not implemented yet" over an empty box.
+                   An empty list under that sentence reads as a rendering
+                   failure, not as good news.
+              */}
+              {planned.length > 0 ? (
+                <>
+                  <p className="mt-3 text-2xs text-fg-faint">
+                    Not implemented yet — these do not run, and no finding on any screen came from
+                    them.
+                  </p>
+                  <ul className="mt-1.5 divide-y divide-[var(--border-subtle)] rounded-lg border border-subtle bg-surface opacity-70">
+                    {planned.map((e) => (
+                      <EngineRow key={e.id} engine={e} />
+                    ))}
+                  </ul>
+                </>
+              ) : null}
             </>
           )}
         </section>
+
+        {/*
+          The one writable control on this screen, and it only appears with a
+          project in scope — `allowTier2` is per repository, so a global
+          version of it would be a switch with no subject.
+        */}
+        {repository ? (
+          <section className="mt-4">
+            <div className="flex items-baseline justify-between">
+              <Eyebrow>Running the project&rsquo;s own toolchain</Eyebrow>
+              <span className="text-2xs text-fg-faint">tier 2 · per project</span>
+            </div>
+            <Tier2Toggle
+              repoId={repository.id}
+              repoName={repository.name}
+              initial={repository.allowTier2}
+            />
+          </section>
+        ) : null}
 
         {run?.gate ? (
           <section className="mt-4">
@@ -157,7 +202,16 @@ export default async function SettingsPage({
  */
 function EngineRow({ engine }: { engine: EngineInfo }) {
   const on = engine.status === "active";
-  const label = on ? "Running" : engine.status === "configured" ? "Needs key" : "Planned";
+  /*
+   * "Off", not "Needs key" — `configured` covers three different blockers now
+   * and only one of them is a credential. Semgrep needs a binary on PATH and
+   * ESLint needs a deliberate opt-in, because it is the one engine that
+   * executes code from the analysed repository. Labelling that row "Needs key"
+   * would send a reader looking for an API key that does not exist, and would
+   * hide the fact that the switch is a security decision rather than a
+   * missing value. The row's note carries the specific answer.
+   */
+  const label = on ? "Running" : engine.status === "configured" ? "Off" : "Planned";
   const colour = on
     ? "var(--sev-success)"
     : engine.status === "configured"

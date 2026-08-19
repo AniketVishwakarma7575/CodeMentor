@@ -68,8 +68,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <TooltipProvider delayDuration={280} skipDelayDuration={200}>
-      {/* h-dvh + overflow-hidden: this is desktop software. Panes scroll, the
-          page does not. */}
+      {/* ⚠️ `fixed inset-0`, NOT `h-dvh`. This is desktop software: panes
+          scroll, the page does not — and `h-dvh` was not actually enforcing
+          that.
+
+          `h-dvh` makes the shell exactly one viewport tall, but it leaves it
+          IN FLOW, so it still contributes to the document's height. Anything
+          that adds even a few pixels below or beside it — a horizontal
+          scrollbar on the document, a stray margin, a portalled overlay —
+          makes the document taller than the viewport and therefore
+          scrollable. Once it is scrollable at all, a wheel gesture that
+          reaches the end of an inner pane CHAINS to the document and drags
+          the whole shell up, leaving a band of blank canvas below it. That is
+          the empty white area under the review workspace.
+
+          `fixed inset-0` takes the shell out of flow entirely. It is pinned to
+          the viewport and can no longer contribute any document height, so the
+          page has nothing to scroll regardless of what else is on it. Paired
+          with `overscroll-behavior: none` on the document (globals.css), which
+          stops the chaining itself. */}
       {/* Visually hidden until focused. Without it a keyboard user tabs the
           whole rail and top bar before reaching the findings. */}
       <a
@@ -79,7 +96,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         Skip to content
       </a>
 
-      <div className="flex h-dvh w-full overflow-hidden bg-canvas">
+      <div className="fixed inset-0 flex w-full overflow-hidden bg-canvas">
         <div className="hidden sm:flex">
           <NavRail collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
         </div>

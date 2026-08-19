@@ -602,4 +602,207 @@ jwt.sign({ uid }, secret, { algorithm: 'HS256', expiresIn: '15m' });`,
         "Every clone, fork and CI cache still holds the original value. Treat any committed secret as disclosed and rotate it.",
     },
   },
+
+  /* ── The quality concepts ─────────────────────────────────────────────────
+     Added with the SonarJS and jscpd engines. Every `conceptId` a rule emits
+     MUST have an entry here: the finding card renders a "Learn this" link
+     straight to /learning/<conceptId>, and the route calls `notFound()` for an
+     id it cannot resolve. A rule pointing at a concept nobody wrote is a 404
+     shipped behind a button.
+
+     ⚠️ These are the first concepts that are not about a VULNERABILITY, and
+        the `vulnerable`/`safe` field names are inherited from when every
+        concept was. Read them as before/after — the "vulnerable" side here is
+        code that works and costs, not code that is exploitable. Renaming the
+        fields would touch the schema, the API and four components for a word.  */
+  {
+    id: "cognitive-complexity",
+    title: "Cognitive complexity",
+    category: "Performance & complexity",
+    difficulty: "Intermediate",
+    readMinutes: 6,
+    mastery: "learning",
+    timesHit: 0,
+    summary:
+      "A measure of how hard code is to UNDERSTAND, not how many paths it has. Nesting costs more than length, which is why the fix is usually to flatten rather than to split.",
+    keyPoints: [
+      "Each break in linear flow costs 1: if, else, ternary, switch, loop, catch.",
+      "Each of those NESTED inside another costs 1 plus its depth. Three nested ifs cost 6; ten sequential ifs cost 10.",
+      "An if/else-if chain costs 1 per branch and no nesting penalty — it reads top to bottom, not inward.",
+      "A boolean sequence costs 1, not 1 per operator. `a && b && c` is one thought; `a && b || c` is two.",
+      "Inverting a condition into an early return removes nesting without deleting a single branch. It is the highest-leverage fix.",
+    ],
+    vulnerable: {
+      language: "javascript",
+      code: `function price(order) {            // complexity 6
+  if (order) {
+    if (order.items.length > 0) {
+      if (order.customer.active) {
+        return total(order);
+      }
+    }
+  }
+  return 0;
+}`,
+    },
+    safe: {
+      language: "javascript",
+      code: `function price(order) {            // complexity 3
+  if (!order) return 0;
+  if (order.items.length === 0) return 0;
+  if (!order.customer.active) return 0;
+  return total(order);
+}`,
+    },
+    question: {
+      prompt:
+        "Which scores HIGHER — ten `if` statements one after another, or three `if` statements nested three deep?",
+      options: [
+        "The ten sequential ifs (10 vs 6)",
+        "The three nested ifs (they are nested)",
+        "They tie — both have the same number of branches",
+      ],
+      answerIndex: 0,
+      explain:
+        "Ten sequential ifs score 10 (1 each, no nesting). Three nested ifs score 1+2+3 = 6. The metric says the long flat function is worse, and it is right — but note it also says the nested one is twice as expensive PER BRANCH, which is the signal to act on.",
+    },
+  },
+  {
+    id: "dry-principle",
+    title: "Duplication and the cost of a copy",
+    category: "Duplication",
+    difficulty: "Beginner",
+    readMinutes: 5,
+    mastery: "learning",
+    timesHit: 0,
+    summary:
+      "A copied block is a bug that can only be half-fixed. The cost is not the extra lines — it is that nothing in either copy says the other one exists.",
+    keyPoints: [
+      "Duplication is how a fixed bug comes back: the next reader finds the copy, not the fix.",
+      "Two copies is a judgement call. Three is a rule — by then the pattern is being propagated, not repeated.",
+      "Extract along a shared REASON to change, not a shared shape. Two blocks that look alike for unrelated reasons will need to diverge.",
+      "The wrong abstraction costs more than the duplication. If the copies need different parameters for different reasons, leave them and write down why.",
+    ],
+    vulnerable: {
+      language: "javascript",
+      code: `// billing.js
+const rate = user.plan === 'pro' ? 0.15 : 0.25;
+const fee  = Math.round(amount * rate * 100) / 100;
+
+// invoices.js — same three lines, fixed in only one place later
+const rate = user.plan === 'pro' ? 0.15 : 0.25;
+const fee  = Math.round(amount * rate * 100) / 100;`,
+    },
+    safe: {
+      language: "javascript",
+      code: `// pricing.js — one place the rate can be wrong
+export function feeFor(user, amount) {
+  const rate = user.plan === 'pro' ? 0.15 : 0.25;
+  return Math.round(amount * rate * 100) / 100;
+}`,
+    },
+    question: {
+      prompt:
+        "Two functions are byte-identical today, but one serves the billing flow and the other an unrelated export job. Extract?",
+      options: [
+        "Yes — identical code should never be duplicated",
+        "No — they share a shape, not a reason to change",
+        "Yes, but only if they are in the same file",
+      ],
+      answerIndex: 1,
+      explain:
+        "Coupling them means the next change to billing has to be made without breaking exports, or vice versa. Extract when the copies would always need the same edit; leave them — with a comment — when they would not.",
+    },
+  },
+  {
+    id: "single-responsibility",
+    title: "One function, one job",
+    category: "Readability",
+    difficulty: "Beginner",
+    readMinutes: 4,
+    mastery: "learning",
+    timesHit: 0,
+    summary:
+      "Length and parameter count are not defects — they are symptoms. Both usually mean one function is doing several things that a reader has to separate for themselves.",
+    keyPoints: [
+      "A function nobody can see all of at once is one whose behaviour nobody can hold at once.",
+      "Past about seven positional parameters, every call site is a place two same-typed arguments can be swapped silently.",
+      "Split along seams the domain already has. Five pieces with no independent meaning is worse than one long function.",
+      "An options object fixes argument ordering and costs you the compiler noticing a missing argument. Good trade above seven, bad below three.",
+    ],
+    vulnerable: {
+      language: "javascript",
+      code: `function report(from, to, tz, currency, locale, includeTax, groupBy, format) {
+  // 140 lines: query, aggregate, format, render
+}
+report(a, b, 'UTC', 'GBP', 'en', true, 'month', 'pdf');`,
+    },
+    safe: {
+      language: "javascript",
+      code: `function report({ range, locale, grouping, format }) {
+  const rows = queryRows(range);
+  const totals = aggregate(rows, grouping);
+  return render(totals, { locale, format });
+}`,
+    },
+    question: {
+      prompt: "A 200-line function parses one file format in a single linear pass. Split it?",
+      options: [
+        "Yes — 200 lines is always too many",
+        "No — it has one job and no independent seams to split along",
+        "Yes, into exactly four 50-line functions",
+      ],
+      answerIndex: 1,
+      explain:
+        "Length is a prompt to check for multiple responsibilities, not a rule to obey. A linear parser with one job is easier to read whole than split into pieces that only make sense in sequence.",
+    },
+  },
+  {
+    id: "control-flow",
+    title: "Branches that lie",
+    category: "Reliability",
+    difficulty: "Intermediate",
+    readMinutes: 5,
+    mastery: "learning",
+    timesHit: 0,
+    summary:
+      "Code that distinguishes between two cases and then treats them identically, or that changes a value in a place a reader scans for a comparison. Both read as intentional and usually are not.",
+    keyPoints: [
+      "Two branches with identical bodies is either a copy-paste that was never finished, or a condition that stopped mattering. Both mislead.",
+      "Reviewers do not catch it: the branches are usually far enough apart on screen that nobody compares them directly.",
+      "`if (x = f())` is legal, assigns, and always takes the true branch when the value is truthy. It is almost always a typo for `===`.",
+      "The `while ((m = re.exec(s)) !== null)` idiom is deliberate — the extra parentheses and the explicit comparison are what mark it as intentional.",
+    ],
+    vulnerable: {
+      language: "javascript",
+      code: `if (mode === 'draft') {
+  save(doc); notify(author);
+} else if (mode === 'review') {
+  save(doc); notify(author);   // never edited after the copy
+}
+
+if (user = findUser(id)) { ... }  // assigns, then always true`,
+    },
+    safe: {
+      language: "javascript",
+      code: `if (mode === 'draft' || mode === 'review') {
+  save(doc);
+  notify(author);
+}
+
+const user = findUser(id);
+if (user) { ... }`,
+    },
+    question: {
+      prompt: "Two branches of a switch have identical bodies. What is the most likely cause?",
+      options: [
+        "A deliberate optimisation",
+        "A copy-paste where the second branch was never edited",
+        "The compiler will merge them anyway, so it does not matter",
+      ],
+      answerIndex: 1,
+      explain:
+        "It is usually an unfinished copy — a live bug, because the code claims the two cases differ. Occasionally it is deliberate, and then a one-line comment saying so is what makes it safe for the next reader to leave alone.",
+    },
+  },
 ];

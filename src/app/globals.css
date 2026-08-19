@@ -387,6 +387,28 @@
     -webkit-text-size-adjust: 100%;
   }
 
+  /*
+   * Scrolling stops at the pane it started in.
+   *
+   * Without this, a wheel gesture that reaches the bottom of an inner scroll
+   * region — the code pane, the file tree, the finding panel, the live
+   * findings list — CHAINS outward and scrolls whatever is behind it. On the
+   * review workspace that dragged the entire app shell up and exposed a band
+   * of blank canvas underneath, which reads as a broken layout rather than as
+   * a scroll.
+   *
+   * It also removes the rubber-band overscroll on macOS and trackpads, where
+   * the whole shell bounces away from the window edge for the same reason.
+   *
+   * Belt and braces with the shell being `fixed inset-0` (app-shell.tsx):
+   * that removes the document's ability to scroll, this removes the gesture
+   * that would ask it to. Either alone leaves one of the two symptoms.
+   */
+  html,
+  body {
+    overscroll-behavior: none;
+  }
+
   body {
     background-color: var(--bg-canvas);
     color: var(--text-primary);
