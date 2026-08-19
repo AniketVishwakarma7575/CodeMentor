@@ -1,4 +1,4 @@
-import type { Dimension, QualityGate, RunStage } from "@/lib/types";
+import type { AiUsage, Dimension, QualityGate, RunStage } from "@/lib/types";
 import { apiFetch } from "./client";
 
 /* ============================================================================
@@ -43,6 +43,8 @@ export interface RunDetail {
   duplication: number | null;
   loc: number | null;
   findingCounts: Record<string, number>;
+  /** Token spend for the AI stage. Null when no model call was made — not zero. */
+  aiUsage: AiUsage | null;
   startedAt: string | null;
   finishedAt: string | null;
   durationMs: number | null;

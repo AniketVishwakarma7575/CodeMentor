@@ -247,6 +247,46 @@ export interface RunLogLine {
   message: string;
 }
 
+/**
+ * What a run's AI review was billed.
+ *
+ * ⚠️ Mirrors `codementor-backend/src/shared/types/domain.ts`. Change both.
+ *
+ * The four token counters are kept separate because they are NOT
+ * interchangeable: cached input costs a tenth of fresh input and a cache write
+ * costs a quarter more, so two runs with identical `totalTokens` can differ by
+ * more than 10x in price. `cacheReadTokens` is also the only signal that the
+ * backend's prompt cache is working — a run where it is 0 is a run paying full
+ * price for a prompt it sends unchanged every time.
+ *
+ * ⚠️ `estimatedCostUsd` IS AN ESTIMATE, computed server-side from published
+ *    list prices. It is null — never 0 — when the configured model has no known
+ *    price. Render the null as "unknown", not as "free".
+ */
+export interface AiUsage {
+  /** The model id the tokens were billed against, as configured at run time. */
+  model: string;
+  /** Messages API responses folded in. One per file that was reviewed. */
+  requests: number;
+  /** Uncached input tokens, billed at the full input rate. */
+  inputTokens: number;
+  /** Tokens written to the prompt cache, billed at 1.25x the input rate. */
+  cacheWriteTokens: number;
+  /** Tokens served from the prompt cache, billed at 0.10x the input rate. */
+  cacheReadTokens: number;
+  /** Response text AND thinking — the API bills both as output. */
+  outputTokens: number;
+  /**
+   * Every token the pass touched: input + cacheWrite + cacheRead + output.
+   *
+   * ⚠️ NOT `inputTokens + outputTokens`. `inputTokens` excludes anything the
+   *    cache served, which on a working run is most of the prompt.
+   */
+  totalTokens: number;
+  /** USD estimate, or null when the model has no known price. */
+  estimatedCostUsd: number | null;
+}
+
 /* -- learning --------------------------------------------------------------- */
 
 export interface Concept {
